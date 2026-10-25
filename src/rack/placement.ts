@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import type { Cable, CableEnd } from '../cable/cable';
 import { events } from '../core/events';
 import { DEVICES, type DeviceDefId } from '../data/catalog';
 import { RACK, RACK_HEIGHT, U } from '../data/units';
@@ -32,13 +33,16 @@ export interface MovingDevice {
   id: string;
   u: number;
   on: boolean;
+  /** 끌어 옮길 때: 뺄 때 꽂혀 있던 케이블 — 끼운 뒤 닿으면 같은 포트에 다시 꽂음 */
+  plugs?: { cable: Cable; end: CableEnd; portId: string }[];
 }
 
 export interface Placement {
   readonly held: DeviceDefId | null;
   /** 들고 있는 게 랙에서 뺀 장비면 그 정보 */
   readonly moving: MovingDevice | null;
-  hold(defId: DeviceDefId, moving?: MovingDevice): void;
+  /** drag: 버튼을 누른 채 끌어 뺀 것 — 떼는 곳에 끼움 (deviceDrag.ts) */
+  hold(defId: DeviceDefId, moving?: MovingDevice, drag?: boolean): void;
   cancel(): void;
   /** 매 프레임: 휠 줌·시점 이동에도 미리보기가 커서를 따라가게 */
   refresh(): void;
@@ -58,6 +62,8 @@ export function createPlacement({ canvas, camera, controls, room, install, putBa
   let held: DeviceDefId | null = null;
   let moving: MovingDevice | null = null;
   let target: { u: number; ok: boolean } | null = null;
+  /** 버튼을 누른 채 끌고 있음 (떼면 끼움) */
+  let dragging = false;
   let lastX = 0;
   let lastY = 0;
 
@@ -84,6 +90,7 @@ export function createPlacement({ canvas, camera, controls, room, install, putBa
   };
 
   const setHeld = (next: DeviceDefId | null, nextMoving: MovingDevice | null = null) => {
+    dragging = false;
     const back = held && moving ? { defId: held, moving } : null;
     held = next;
     moving = nextMoving;
@@ -93,28 +100,41 @@ export function createPlacement({ canvas, camera, controls, room, install, putBa
     if (back) putBack(back.defId, back.moving);
   };
 
+  /** 커서 자리에 끼움. 칸이 안 맞으면 false (끌기 모드는 그대로 놓아 원래 자리로) */
+  const drop = (x: number, y: number): boolean => {
+    lastX = x;
+    lastY = y;
+    update();
+    if (!held || !target?.ok) return false;
+    // 빈손 먼저 → 설치 이벤트가 마지막에 와서 설치 안내가 남는다
+    const defId = held;
+    const m = moving;
+    const { u } = target;
+    moving = null;
+    setHeld(null);
+    install(defId, u, m);
+    controls.enabled = true;
+    return true;
+  };
+
   // 케이블 드래그·OrbitControls보다 먼저 받아야 하므로 window 캡처 단계에서, 그보다 먼저 등록
   window.addEventListener(
     'pointerdown',
     (e) => {
-      if (!held || e.target !== canvas || e.button !== 0) return;
+      if (!held || dragging || e.target !== canvas || e.button !== 0) return;
       e.stopImmediatePropagation();
       e.preventDefault();
-      lastX = e.clientX;
-      lastY = e.clientY;
-      update();
-      if (!target?.ok) return;
-      // 빈손 먼저 → 설치 이벤트가 마지막에 와서 설치 안내가 남는다
-      const defId = held;
-      const m = moving;
-      const { u } = target;
-      moving = null;
-      setHeld(null);
-      install(defId, u, m);
-      controls.enabled = true;
+      drop(e.clientX, e.clientY);
     },
     { capture: true },
   );
+  // 끌기 모드(장비 몸체를 끌어 뺌): 버튼을 떼는 곳에 끼우고, 칸이 안 맞으면 원래 자리로
+  window.addEventListener('pointerup', (e) => {
+    if (!held || !dragging || e.button !== 0) return;
+    dragging = false;
+    controls.enabled = true;
+    if (!drop(e.clientX, e.clientY)) setHeld(null);
+  });
 
   canvas.addEventListener('pointermove', (e) => {
     lastX = e.clientX;
@@ -137,8 +157,9 @@ export function createPlacement({ canvas, camera, controls, room, install, putBa
     get moving() {
       return moving;
     },
-    hold(defId, m) {
+    hold(defId, m, drag = false) {
       setHeld(defId, m ?? null);
+      dragging = drag;
     },
     cancel() {
       if (held) setHeld(null);

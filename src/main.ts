@@ -9,6 +9,10 @@ import { createSellTool } from './view/sell';
 import { createStartRoom, restoreRoom } from './view/room';
 import { createPowerButtons } from './view/powerButton';
 import { createHover } from './view/hover';
+import { createDeviceDrag } from './view/deviceDrag';
+import { endNode } from './cable/cable';
+import { plug } from './cable/plug';
+import { canReach } from './cable/velcro';
 import { createPlacement, type MovingDevice } from './rack/placement';
 import { CABLES, DEVICES, START_MONEY, type DeviceDefId } from './data/catalog';
 import { events, type ToolId } from './core/events';
@@ -59,7 +63,7 @@ const buy = (id: DeviceDefId): boolean => {
   return true;
 };
 
-// 입력 우선순위는 등록 순서: 장비 들기 → 판매 → 전원 버튼 → 벨크로 → 매니저 고리 → 케이블 드래그(손) → 장비 정보 카드 → OrbitControls
+// 입력 우선순위는 등록 순서: 장비 들기 → 판매 → 전원 버튼 → 벨크로 → 매니저 고리 → 케이블 드래그(손) → 장비 끌기 → 장비 정보 카드 → OrbitControls
 const placement = createPlacement({
   canvas,
   camera: stage.camera,
@@ -74,7 +78,8 @@ const placement = createPlacement({
   },
   putBack(id, moving) {
     reinstall(id, moving.u, moving);
-    flashHint(`${DEVICES[id].name}: 원래 자리(U${moving.u})로 돌려놨어요 · 케이블은 다시 꽂으세요`);
+    // 끌어 옮기다 빈 칸이 아닌 곳에 놓음 → 케이블까지 그대로 (reinstall 안내)
+    if (!moving.plugs) flashHint(`${DEVICES[id].name}: 원래 자리(U${moving.u})로 돌려놨어요 · 케이블은 다시 꽂으세요`);
   },
 });
 /** 뺀 장비를 같은 id로 다시 끼움. 전원 버튼 상태는 뺄 때 그대로 */
@@ -82,6 +87,20 @@ const reinstall = (id: DeviceDefId, u: number, moving: MovingDevice) => {
   const device = room.install(id, u, moving.id);
   if (!device) return;
   if (moving.on) room.setPower(device, true);
+  // 끌어 옮긴 것: 꽂혀 있던 케이블을 같은 포트에 다시 꽂음 (케이블 길이가 닿는 것만)
+  if (moving.plugs) {
+    let kept = 0;
+    for (const p of moving.plugs) {
+      const port = device.ports.find((x) => x.id === p.portId);
+      if (port && canReach(p.cable, endNode(p.cable, p.end), port.pos) && plug(p.cable, p.end, port)) kept++;
+    }
+    const lost = moving.plugs.length - kept;
+    flashHint(
+      `${DEVICES[id].name}: ${u === moving.u ? `U${u} 그대로` : `U${u} 칸으로 옮김`}` +
+        (kept ? ` · 케이블 ${kept}개 그대로 꽂힘` : '') + (lost ? ` · 닿지 않는 케이블 ${lost}개는 뽑힘` : ''),
+    );
+    return;
+  }
   // device:installed의 "전원 버튼을 누르세요" 안내를 덮어씀 (켜진 채 뺐으면 이미 켜져 있음)
   const after = DEVICES[id].rings ? '뒷면 고리에 케이블을 다시 거세요' : `뒷면에서 케이블을 다시 꽂으세요${moving.on ? '' : ' · 앞면 전원 버튼을 누르세요'}`;
   flashHint(`${DEVICES[id].name}: U${u}에 다시 끼움 · ${after}`);
@@ -145,6 +164,21 @@ const cableDrag = createCableDrag({
     const ring = manager.snap(ray);
     const post = velcro.snap(ring ? null : ray);
     return ring ?? post;
+  },
+});
+// 장비 몸체를 끌면 랙에서 빼서 든 채로 → 떼는 칸에 끼움. 케이블 끌기 뒤(케이블이 먼저), 정보 카드 앞
+createDeviceDrag({
+  canvas,
+  camera: stage.camera,
+  room,
+  active: () => tool === 'hand' || tool === 'velcro',
+  busy: () => placement.held !== null,
+  start(device) {
+    const plugs = device.ports.flatMap((p) => (p.plugged ? [{ ...p.plugged, portId: p.id }] : []));
+    const moving: MovingDevice = { id: device.id, u: device.u!, on: device.on, plugs };
+    inspector.close();
+    if (!room.remove(device)) return;
+    placement.hold(device.def.id, moving, true);
   },
 });
 const inspector = createInspector({
