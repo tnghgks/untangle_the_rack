@@ -17,6 +17,10 @@ export const RING_R = 0.018;
 /** 고리 중심에서 이 거리 안의 마디를 건다 */
 export const HOOK_CAPTURE = 0.05;
 /** 한 고리에 여러 가닥이 겹치지 않게 (y, z) 조금씩 비켜 놓음 */
+/** 든 선을 걸 때 앞 고정점부터 이 비율만큼만 늘어지게 (1이면 딱 직선 — 물리가 떨림) */
+const TAUT = 1.03;
+/** 팽팽하게 걸 때 고리 안에서 가로로 비켜 놓을 수 있는 한도 (고리 안지름 3.6cm 안) */
+const RING_SLIDE = 0.02;
 const SPREAD: [number, number][] = [[0, 0], [0.007, 0], [-0.007, 0], [0, 0.007], [0, -0.007], [0.006, 0.006], [-0.006, -0.006]];
 
 export interface Ring {
@@ -40,30 +44,102 @@ export function hooksAt(cables: readonly Cable[], ringId: string): { cable: Cabl
   return cables.flatMap((cable) => cable.ties.filter((t) => t.hook === ringId).map((tie) => ({ cable, tie })));
 }
 
+/** 걸 수 있는 마디: 커넥터 쪽 두 마디가 아니고 아직 안 묶임 */
+function canHook(cable: Cable, i: number): boolean {
+  return i >= 2 && i <= cable.rope.n - 3 && !cable.rope.isPinned(i);
+}
+
 /** 고리 근처의 가장 가까운 마디 (커넥터 쪽 두 마디는 꽂기가 씀) */
 function nearestNode(cable: Cable, at: Vec3): number {
   const { rope } = cable;
   const p = rope.pos;
   let best = -1, bestD = HOOK_CAPTURE;
   for (let i = 2; i <= rope.n - 3; i++) {
-    if (rope.isPinned(i)) continue;
+    if (!canHook(cable, i)) continue;
     const d = Math.hypot(p[i * 3] - at[0], p[i * 3 + 1] - at[1], p[i * 3 + 2] - at[2]);
     if (d < bestD) { bestD = d; best = i; }
   }
   return best;
 }
 
-/** 고리에 닿아 있는 선을 모두 건다. 닿지 않아 못 건 선도 알려 줌 */
-export function hook(cables: readonly Cable[], ring: Ring): { hooked: Cable[]; taut: Cable[] } {
+/**
+ * 팽팽하게 걸 마디: 잡은 마디 양옆(선을 따라)의 가장 가까운 묶음(앞서 건 고리·벨크로) 중 고리에 더 가까운 것부터
+ * 직선 거리 × TAUT만큼 떨어진 마디 — 잡은 쪽으로. 실제 케이블이 고리 속을 미끄러져 고리 사이가 곧게 펴지는 것을 흉내 냄
+ * (남는 길이는 반대쪽 자유 구간으로). 꽂힌 포트는 기준으로 안 씀 — 포트 바로 위 고리에 걸면 포트 옆 마디가 들어가
+ * 잡은 곳과 엉뚱한 데가 걸림 (10-26 플레이 피드백). 양옆에 묶음이 없으면 null (잡은 마디 그대로)
+ */
+function tautNode(cable: Cable, i: number, at: Vec3): { node: number; at: Vec3 } | null {
+  const below = cable.ties.filter((t) => t.node < i).sort((a, b) => b.node - a.node)[0];
+  const above = cable.ties.filter((t) => t.node > i).sort((a, b) => a.node - b.node)[0];
+  let near: Tie | null = null, nearD = Infinity;
+  for (const a of [below, above]) {
+    if (!a) continue;
+    const d = Math.hypot(at[0] - a.pos[0], at[1] - a.pos[1], at[2] - a.pos[2]);
+    if (d < nearD) { nearD = d; near = a; }
+  }
+  if (!near) return null;
+  const seg = cable.rope.cfg.segLen;
+  const dir = Math.sign(i - near.node);
+  // 마디 수가 정수라 남거나 모자란 길이는 고리 안에서 가로(x, 선이 지나는 방향)로 비켜 흡수 → 비킬 거리가 작은 쪽
+  const dx0 = at[0] - near.pos[0];
+  const r2 = (at[1] - near.pos[1]) ** 2 + (at[2] - near.pos[2]) ** 2;
+  const shiftFor = (n: number) => {
+    const want = (n * seg) / TAUT;
+    return want * want > r2 ? Math.sign(dx0 || 1) * Math.sqrt(want * want - r2) - dx0 : Infinity;
+  };
+  const exact = (nearD * TAUT) / seg;
+  const spans = [Math.floor(exact), Math.ceil(exact)].filter((n) => n >= 1);
+  const span = spans.reduce((a, b) => (Math.abs(shiftFor(b)) < Math.abs(shiftFor(a)) ? b : a));
+  const j = near.node + dir * span;
+  const lo = Math.min(near.node, j), hi = Math.max(near.node, j);
+  // 그 사이에 다른 묶음이 끼면 선이 그 묶음을 뚫고 지나가게 됨
+  if (cable.ties.some((t) => t.node > lo && t.node < hi)) return null;
+  if (!canHook(cable, j)) return null;
+  const s = shiftFor(span);
+  const shift = Number.isFinite(s) ? Math.max(-RING_SLIDE, Math.min(RING_SLIDE, s)) : 0;
+  const shifted: Vec3 = [at[0] + shift, at[1], at[2]];
+  if (canReach(cable, j, shifted)) return { node: j, at: shifted };
+  return canReach(cable, j, at) ? { node: j, at } : null;
+}
+
+/**
+ * 잡은 마디 i에서 가까운 순으로, 고리 자리 at까지 닿는 마디. 양옆 고정점(꽂힌 끝·다른 묶음)은 넘지 않는다
+ * (선이 그 고정점을 뚫고 지나가지 않게). 없으면 -1
+ */
+function slideNode(cable: Cable, i: number, at: Vec3): number {
+  const ok = (j: number) => canHook(cable, j) && canReach(cable, j, at);
+  // 한쪽이 막히면 그쪽은 더 안 봄
+  let loIn = true, hiIn = true;
+  for (let d = 0; loIn || hiIn; d++) {
+    const lo = i - d, hi = i + d;
+    loIn &&= lo >= 2 && !cable.rope.isPinned(lo);
+    hiIn &&= hi <= cable.rope.n - 3 && !cable.rope.isPinned(hi);
+    if (loIn && ok(lo)) return lo;
+    if (hiIn && ok(hi)) return hi;
+  }
+  return -1;
+}
+
+/** 든 선: 팽팽하게 걸 수 있으면 그 마디, 아니면 잡은 곳에서 닿는 가장 가까운 마디 */
+function heldNode(cable: Cable, i: number, at: Vec3): { node: number; at: Vec3 } {
+  return tautNode(cable, i, at) ?? { node: slideNode(cable, i, at), at };
+}
+
+/**
+ * 고리에 닿아 있는 선을 모두 건다 (빈손 클릭). 닿지 않아 못 건 선도 알려 줌.
+ * held: 손에 든 선과 잡은 마디 — 그 선만 건다 (같은 자리를 지나는 다른 선은 그대로, 10-26 플레이 피드백). 손이 고리에 붙어 있으니 마디가 아직 덜 따라왔어도 건다. 잡은 곳이 커넥터 쪽이라
+ * 고리까지 안 닿으면 고리 속으로 선이 미끄러진 것처럼 닿는 가장 가까운 마디를 건다 (10-26 "끼우기 어렵다")
+ */
+export function hook(cables: readonly Cable[], ring: Ring, held?: { cable: Cable; node: number }): { hooked: Cable[]; taut: Cable[] } {
   const hooked: Cable[] = [], taut: Cable[] = [];
   let k = hooksAt(cables, ring.id).length;
-  for (const cable of cables) {
+  for (const cable of held ? [held.cable] : cables) {
     if (cable.ties.some((t) => t.hook === ring.id)) continue;
-    const node = nearestNode(cable, ring.pos);
-    if (node < 0) continue;
     const [dy, dz] = SPREAD[k % SPREAD.length];
-    const at: Vec3 = [ring.pos[0], ring.pos[1] + dy, ring.pos[2] + dz];
-    if (!canReach(cable, node, at)) {
+    const spot: Vec3 = [ring.pos[0], ring.pos[1] + dy, ring.pos[2] + dz];
+    const { node, at } = held ? heldNode(cable, held.node, spot) : { node: nearestNode(cable, ring.pos), at: spot };
+    if (node < 0 && !held) continue;
+    if (node < 0 || !canReach(cable, node, at)) {
       taut.push(cable);
       continue;
     }

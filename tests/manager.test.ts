@@ -22,11 +22,11 @@ const steps = (room: Room, n: number) => {
 };
 
 /** 시작 방 + U15에 매니저 (낮게 달면 남는 길이가 바닥으로 흘러 효과가 작음: U2 23→24%, U10 →70%, U15 →95%) */
-function withManager(): { room: Room; manager: Device; rings: Ring[] } {
+function withManager(u = 15): { room: Room; manager: Device; rings: Ring[] } {
   const room = createStartRoom(new THREE.Scene(), new THREE.Group());
-  const manager = room.install('cable-manager', 15)!;
+  const manager = room.install('cable-manager', u)!;
   steps(room, 240);
-  return { room, manager, rings: ringsOf(manager.id, 15, DEVICES['cable-manager'].rings!) };
+  return { room, manager, rings: ringsOf(manager.id, u, DEVICES['cable-manager'].rings!) };
 }
 
 /** 플레이어처럼: 늘어진 곳을 잡아 고리로 끌어다 대고 건 뒤 놓음 */
@@ -50,6 +50,71 @@ describe('케이블 매니저', () => {
     expect(manager.power.status).toBe('off');
     expect(manager.ports).toHaveLength(0);
     expect(updatePower([manager.power], new Map(), 0).incomePerSec).toBe(0);
+  });
+
+  it('손에 든 마디는 고리까지 덜 따라왔어도 걸림 (Space를 바로 눌러도)', () => {
+    const { room, rings } = withManager();
+    const c = room.world.cables[0];
+    const r = hook(room.world.cables, rings[1], { cable: c, node: backmost(c) });
+    expect(r.hooked).toEqual([c]);
+  });
+
+  it('든 채로 걸면 든 선만 — 같은 고리에 와 있는 다른 선은 안 걸림', () => {
+    const { room, rings } = withManager();
+    const [a, b] = room.world.cables;
+    // b를 고리에 대 놓은 채로 (손에 든 채 붙잡아 둠)
+    b.rope.grab(backmost(b));
+    for (let i = 0; i < 180; i++) {
+      const t: [number, number, number] = [...rings[1].pos];
+      b.rope.clampToReach(t);
+      b.rope.setGrabTarget(t[0], t[1], t[2]);
+      room.world.step(STEP_SEC);
+    }
+    const r = hook(room.world.cables, rings[1], { cable: a, node: backmost(a) });
+    expect(r.hooked).toEqual([a]);
+    expect(b.ties).toHaveLength(0);
+    // 빈손 클릭은 닿아 있는 선을 다 검
+    expect(hook(room.world.cables, rings[1]).hooked).toEqual([b]);
+  });
+
+  it('포트 바로 위 고리에 걸어도 포트 옆이 아니라 앞서 건 고리에서 이어지는 곳이 걸림', () => {
+    // U4 = 엔트리 서버(U3) 바로 위. 랜 포트(x −0.12)가 rings[1](x −0.1) 몇 cm 아래
+    const { room, rings } = withManager(4);
+    const c = room.world.cables[2];
+    hook(room.world.cables, rings[0], { cable: c, node: 20 });
+    // 포트 — 포트에서 팽팽하게 재면 포트 옆 마디가 들어갔음
+    hook(room.world.cables, rings[1], { cable: c, node: 30 });
+    const [a, b] = c.ties;
+    expect(b.node - a.node).toBeGreaterThan(0);
+    expect(b.node - a.node).toBeLessThanOrEqual(4);
+  });
+
+  it('커넥터 가까이를 잡아 안 닿으면 닿는 마디로 미끄러져 걸림', () => {
+    const { room, rings } = withManager();
+    const c = room.world.cables[0];
+    const r = hook(room.world.cables, rings[1], { cable: c, node: 3 });
+    expect(r.hooked).toEqual([c]);
+    expect(c.ties[0].node).toBeGreaterThan(3);
+  });
+
+  it('고리를 차례로 걸면 고리 사이가 곧게 (남는 길이는 뒤쪽으로)', () => {
+    const { room, rings } = withManager();
+    const c = room.world.cables[2];
+    for (const ring of rings) {
+      // 한쪽 포트에서 이어 가며 거는 것처럼: 방금 건 고리 다음의 늘어진 곳을 잡음
+      const last = c.ties[c.ties.length - 1];
+      const node = last ? last.node + 6 : 14;
+      expect(hook(room.world.cables, ring, { cable: c, node }).hooked).toEqual([c]);
+    }
+    steps(room, 300);
+    const ties = [...c.ties].sort((a, b) => a.node - b.node);
+    const p = c.rope.pos;
+    let sag = 0;
+    for (let k = 1; k < ties.length; k++) {
+      for (let i = ties[k - 1].node + 1; i < ties[k].node; i++) sag = Math.max(sag, ties[k].pos[1] - p[i * 3 + 1]);
+    }
+    // 팽팽하게 걸기 전엔 2.7cm (마디 4cm라 고리 10cm 사이에 12cm가 들어감). 고리 안에서 비켜 놓아 1.3cm
+    expect(sag).toBeLessThan(0.015);
   });
 
   it('고리에 닿지 않은 선은 안 걸림', () => {

@@ -5,12 +5,14 @@ import type { CableDrag } from './drag';
 import type { Room } from './room';
 
 // 케이블 매니저 고리 (GDD 5장): 벨크로와 같은 손 — 케이블을 끌어 고리에 대면 손이 고리에 붙고,
-// 든 채로 Space 또는 오른쪽 클릭으로 건다. 고리에 닿아 있던 다른 선도 함께 (한 고리에 여러 가닥).
+// 든 채로 Space 또는 오른쪽 클릭으로 건다. 든 선만 걸림 — 같은 자리를 지나는 다른 선은 그대로. 한 고리에 여러 가닥을 하나씩 걸 수 있음.
 // 빈손으로 고리를 클릭: 걸린 게 있으면 모두 빼기, 없으면 닿아 있는 선 걸기.
 // 손·벨크로 도구 모두에서 쓴다 (따로 도구 없음). 케이블 끌기(drag.ts)보다 먼저 등록해야 고리 클릭을 가로챈다.
 
-/** 커서 광선이 고리 중심에서 이 거리 안을 지나면 고리를 가리킨 것으로 */
+/** 커서 광선이 고리 중심에서 이 거리 안을 지나면 고리를 가리킨 것으로 — 가까이서 */
 const RING_PICK = 0.03;
+/** 멀리서: 시선 각도(라디안)로. 0.03 ≈ 기본 화각·창 높이 720px에서 26px (10-26 "고리가 끼우기 어렵다") */
+const RING_PICK_ANGLE = 0.03;
 const LIT = 0x2d6cdf;
 const LIT_FULL = 0x5a3a12;
 
@@ -39,15 +41,18 @@ export function createManagerTool({ canvas, camera, room, drag, active, flash }:
   const rings = (): Ring[] =>
     room.devices.flatMap((d) => (d.def.rings && d.u !== null ? ringsOf(d.id, d.u, d.def.rings) : []));
 
-  /** 광선에 가장 앞에서 걸리는 고리 */
+  /** 광선이 가장 가깝게(화면 각도로) 지나는 고리. 멀리서 봐도 화면에서 같은 크기만큼 잡히게 */
   const rayToRing = (ray: THREE.Ray): Ring | null => {
-    let best: Ring | null = null, bestT = Infinity;
+    let best: Ring | null = null, bestA = Infinity;
     for (const r of rings()) {
       at.set(r.pos[0], r.pos[1], r.pos[2]);
       const t = at.clone().sub(ray.origin).dot(ray.direction);
-      if (t <= 0 || t >= bestT || ray.distanceToPoint(at) > RING_PICK) continue;
+      if (t <= 0) continue;
+      const d = ray.distanceToPoint(at);
+      const a = d / t;
+      if (d > Math.max(RING_PICK, t * RING_PICK_ANGLE) || a >= bestA) continue;
       best = r;
-      bestT = t;
+      bestA = a;
     }
     return best;
   };
@@ -71,7 +76,8 @@ export function createManagerTool({ canvas, camera, room, drag, active, flash }:
 
   const hookHeld = (): boolean => {
     if (!active() || !holding || !drag().held()) return false;
-    const r = hook(room.world.cables, holding);
+    // 잡은 마디는 손이 고리에 붙어 있으니 아직 덜 따라왔어도 그 마디를 건다
+    const r = hook(room.world.cables, holding, drag().held() ?? undefined);
     drag().drop();
     holding = null;
     report(r.hooked.length, r.taut.length);
