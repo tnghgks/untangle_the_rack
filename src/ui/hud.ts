@@ -1,0 +1,59 @@
+import { events, type ViewMode } from '../core/events';
+import { formatMoney, formatRate } from './format';
+
+// HUD 루트는 pointer-events: none — 빈 곳 입력은 그대로 3D 캔버스로 통과한다.
+// 패널·버튼만 .hud-panel 로 입력을 받는다.
+
+export interface HudModel {
+  money: number;
+  incomePerSec: number;
+  powerUsed: number;
+  powerCap: number;
+}
+
+export interface Hud {
+  setModel(m: HudModel): void;
+}
+
+export function createHud(root: HTMLElement): Hud {
+  root.innerHTML = `
+    <header class="hud-panel hud-top">
+      <span class="stat money" data-k="money"></span>
+      <span class="stat rate" data-k="rate"></span>
+      <span class="stat power" data-k="power"></span>
+    </header>
+    <aside class="hud-panel hud-shop">
+      <h2>상점</h2>
+      <p class="muted">M2에서 장비 카드가 들어옵니다</p>
+    </aside>
+    <nav class="hud-panel hud-toolbar">
+      <div class="group" role="group" aria-label="작업 시점">
+        <button data-view="front">앞면</button>
+        <button data-view="back">뒷면</button>
+        <button data-view="free" class="on">자유</button>
+      </div>
+      <div class="group" role="group" aria-label="도구">
+        <button class="on" data-tool="hand">✋ 손</button>
+      </div>
+    </nav>
+  `;
+
+  const field = (k: string) => root.querySelector<HTMLElement>(`[data-k="${k}"]`)!;
+  const money = field('money');
+  const rate = field('rate');
+  const power = field('power');
+
+  const viewButtons = root.querySelectorAll<HTMLButtonElement>('[data-view]');
+  viewButtons.forEach((b) => b.addEventListener('click', () => events.emit('view:set', b.dataset.view as ViewMode)));
+  events.on('view:changed', (mode) => {
+    viewButtons.forEach((b) => b.classList.toggle('on', b.dataset.view === mode));
+  });
+
+  return {
+    setModel(m) {
+      money.textContent = `💰 ${formatMoney(m.money)}`;
+      rate.textContent = formatRate(m.incomePerSec);
+      power.textContent = `⚡ ${m.powerUsed.toLocaleString('ko-KR')} / ${m.powerCap.toLocaleString('ko-KR')}W`;
+    },
+  };
+}

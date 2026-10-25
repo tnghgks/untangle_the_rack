@@ -1,0 +1,92 @@
+:root {
+  --panel-bg: rgba(18, 22, 28, 0.78);
+  --panel-border: rgba(255, 255, 255, 0.08);
+  --text: #e6eaf0;
+  --muted: #8a94a3;
+  --accent: #3cff7a;
+  --btn-bg: rgba(255, 255, 255, 0.06);
+  --btn-on: rgba(60, 255, 122, 0.18);
+  font-family: 'Pretendard', system-ui, -apple-system, 'Segoe UI', 'Malgun Gothic', sans-serif;
+  color: var(--text);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #14171c;
+}
+
+#stage {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  touch-action: none;
+}
+
+#hud {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  user-select: none;
+}
+
+.hud-panel {
+  pointer-events: auto;
+  position: absolute;
+  background: var(--panel-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 10px;
+  backdrop-filter: blur(8px);
+}
+
+.hud-top {
+  top: 12px;
+  left: 12px;
+  display: flex;
+  gap: 18px;
+  padding: 8px 14px;
+  font-variant-numeric: tabular-nums;
+}
+.hud-top .money { font-weight: 700; font-size: 1.15rem; }
+.hud-top .rate { color: var(--accent); align-self: center; }
+.hud-top .power { color: var(--muted); align-self: center; }
+
+.hud-shop {
+  top: 12px;
+  right: 12px;
+  width: 240px;
+  padding: 10px 14px;
+}
+.hud-shop h2 { margin: 0 0 6px; font-size: 1rem; }
+.muted { color: var(--muted); font-size: 0.85rem; margin: 0; }
+
+.hud-toolbar {
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  gap: 14px;
+  padding: 6px;
+}
+.hud-toolbar .group { display: flex; gap: 4px; }
+.hud-toolbar button {
+  font: inherit;
+  color: var(--text);
+  background: var(--btn-bg);
+  border: 1px solid transparent;
+  border-radius: 7px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+.hud-toolbar button:hover { border-color: var(--panel-border); }
+.hud-toolbar button.on { background: var(--btn-on); border-color: rgba(60, 255, 122, 0.4); }
+
+@media (max-width: 640px) {
+  .hud-top { gap: 10px; font-size: 0.85rem; flex-wrap: wrap; right: 12px; }
+  .hud-shop { top: auto; bottom: 64px; width: auto; left: 12px; }
+}
