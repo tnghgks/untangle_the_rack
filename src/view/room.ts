@@ -7,11 +7,13 @@ import { events } from '../core/events';
 import { createRng } from '../core/rng';
 import type { DeviceDefId } from '../data/catalog';
 import { CABLE_DEFAULT_LENGTH, RACK_HEIGHT } from '../data/units';
-import { createPdu, createRackDevice, PDU_SIDES, setDevicePower, type Device, type Socket } from '../rack/device';
+import { BOOT_MS, updatePower, type PowerSummary } from '../game/power';
+import { createPdu, createRackDevice, PDU_SIDES, setDeviceLed, setDevicePower, type Device, type Socket } from '../rack/device';
 import { RackSlots } from '../rack/rack';
 import { collectColliders } from './scene';
 
 // 서버실: 랙 슬롯표 + 장비 + 케이블 월드. 장비를 끼우면 포트·충돌 상자를 월드에 더한다.
+// 가동 판정은 updatePower(now): 꽂힌 케이블로 포트 연결표를 만들어 power.ts에 넘긴다.
 
 const LAN_COLORS = [0x2f7fd8, 0xe0b020, 0x38a860, 0xd0483c];
 const POWER_COLOR = 0x23262b;
@@ -36,6 +38,8 @@ export class Room {
   private spawned = 0;
   private stressCables: Cable[] = [];
   private readonly rng = createRng(42);
+  /** 마지막 가동 판정 결과 */
+  summary: PowerSummary = { incomePerSec: 0, powerUsed: 0, powerCap: 0 };
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -90,6 +94,24 @@ export class Room {
     if (device.on === on) return;
     setDevicePower(device, on);
     events.emit('device:power', { deviceId: device.id, on });
+  }
+
+  /** 가동 판정 + LED. 매 틱과 배선·전원 이벤트마다 */
+  updatePower(now: number): PowerSummary {
+    const links = new Map<string, string>();
+    for (const c of this.world.cables) {
+      const [a, b] = c.ends;
+      if (!a || !b) continue;
+      links.set(a.id, b.id);
+      links.set(b.id, a.id);
+    }
+    this.summary = updatePower(
+      this.devices.map((d) => d.power),
+      links,
+      now,
+    );
+    for (const d of this.devices) setDeviceLed(d, d.power.status);
+    return this.summary;
   }
 
   private addCable(kind: PortKind): Cable {
@@ -183,6 +205,8 @@ export function createStartRoom(scene: THREE.Scene, rack: THREE.Group): Room {
   room.wire(port(sw, 'lan'), port(entry, 'lan'));
   room.setPower(sw, true);
   room.setPower(entry, true);
+  // 시작 장비는 이미 부팅이 끝난 상태로 → 처음부터 초당 1원
+  room.updatePower(Date.now() - BOOT_MS);
   // 꽂힌 케이블이 늘어진 모양으로 자리 잡게 미리 돌림
   for (let i = 0; i < 240; i++) room.world.step(1 / 60);
   return room;

@@ -20,6 +20,8 @@ export interface PlacementDeps {
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
   room: Room;
+  /** 빈 칸을 클릭함 → 돈을 내고 끼움 */
+  install(defId: DeviceDefId, u: number): void;
 }
 
 export interface Placement {
@@ -28,7 +30,7 @@ export interface Placement {
   cancel(): void;
 }
 
-export function createPlacement({ canvas, camera, controls, room }: PlacementDeps): Placement {
+export function createPlacement({ canvas, camera, controls, room, install }: PlacementDeps): Placement {
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   const plane = new THREE.Plane();
@@ -88,7 +90,7 @@ export function createPlacement({ canvas, camera, controls, room }: PlacementDep
       const defId = held;
       const { u } = target;
       setHeld(null);
-      room.install(defId, u);
+      install(defId, u);
       controls.enabled = true;
     },
     { capture: true },

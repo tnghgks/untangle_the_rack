@@ -3,6 +3,7 @@ import type { Port, PortKind } from '../cable/cable';
 import type { Vec3 } from '../cable/collide';
 import { DEVICES, type DeviceDef, type DeviceDefId } from '../data/catalog';
 import { RACK, U, uBottomY } from '../data/units';
+import type { PowerDevice, PowerStatus } from '../game/power';
 
 // 장비 엔티티와 메시. 앞면: 전원 버튼·LED, 뒷면: 포트 소켓.
 // 메시는 랙 그룹(원점 = 월드 원점)에 붙으므로 로컬 좌표 = 월드 좌표.
@@ -18,8 +19,14 @@ const SOCKET: Record<PortKind, THREE.Vector3> = {
   power: new THREE.Vector3(0.024, 0.016, 0.006),
 };
 const SOCKET_COLOR: Record<PortKind, number> = { lan: 0x23384d, power: 0x0c0d0f };
-const LED_ON = 0x3cff7a;
-const LED_OFF = 0x1d2a22;
+/** 가동 초록 · 부팅 노랑 · 네트워크 없음 빨강 · 꺼짐/전기 없음 어둠 */
+const LED_COLOR: Record<PowerStatus, number> = {
+  off: 0x1d2a22,
+  nopower: 0x1d2a22,
+  booting: 0xffc23c,
+  nolink: 0xff4a3c,
+  running: 0x3cff7a,
+};
 
 export interface Device {
   id: string;
@@ -29,8 +36,12 @@ export interface Device {
   on: boolean;
   ports: Port[];
   group: THREE.Group;
+  /** 장비 정보 카드용 레이캐스트 대상 */
+  body: THREE.Mesh;
   button: THREE.Mesh | null;
   led: THREE.Mesh | null;
+  /** 가동 판정 상태 (power.ts가 갱신) */
+  power: PowerDevice;
 }
 
 export interface Socket {
@@ -75,6 +86,7 @@ export function createRackDevice(id: string, defId: DeviceDefId, u: number): { d
   body.castShadow = true;
   body.receiveShadow = true;
   body.userData.solid = true; // 케이블 충돌 상자
+  body.userData.deviceId = id;
   g.add(body);
 
   // 앞면 전원 버튼 (왼쪽) + LED (오른쪽). 버튼은 몸체 밖으로 살짝 튀어나와 충돌 상자에 안 들어감
@@ -88,7 +100,7 @@ export function createRackDevice(id: string, defId: DeviceDefId, u: number): { d
   button.userData.deviceId = id;
   g.add(button);
 
-  const led = new THREE.Mesh(new THREE.SphereGeometry(0.004, 8, 8), new THREE.MeshBasicMaterial({ color: LED_OFF }));
+  const led = new THREE.Mesh(new THREE.SphereGeometry(0.004, 8, 8), new THREE.MeshBasicMaterial({ color: LED_COLOR.off }));
   led.position.set(DEVICE_WIDTH / 2 - 0.03, cy, frontZ + 0.002);
   g.add(led);
 
@@ -104,14 +116,27 @@ export function createRackDevice(id: string, defId: DeviceDefId, u: number): { d
     return port;
   });
 
-  const device: Device = { id, def, u, on: false, ports, group: g, button, led };
+  const power = powerOf(id, def, isSwitch ? 'switch' : 'server', ports);
+  const device: Device = { id, def, u, on: false, ports, group: g, body, button, led, power };
   return { device, sockets };
 }
 
+function powerOf(id: string, def: DeviceDef, role: PowerDevice['role'], ports: Port[]): PowerDevice {
+  return {
+    id, role, on: role === 'pdu', watts: def.watts, incomePerSec: def.incomePerSec, capacity: def.capacity ?? 0,
+    tripped: false, load: 0, ports: ports.map((p) => ({ id: p.id, kind: p.kind })), bootStart: null, status: 'off',
+  };
+}
+
+/** 버튼 눌림. LED는 가동 판정 뒤 setDeviceLed로 */
 export function setDevicePower(device: Device, on: boolean): void {
   device.on = on;
-  if (device.led) (device.led.material as THREE.MeshBasicMaterial).color.setHex(on ? LED_ON : LED_OFF);
+  device.power.on = on;
   if (device.button) device.button.position.z = DEVICE_DEPTH / 2 + (on ? 0.001 : 0.002);
+}
+
+export function setDeviceLed(device: Device, status: PowerStatus): void {
+  if (device.led) (device.led.material as THREE.MeshBasicMaterial).color.setHex(LED_COLOR[status]);
 }
 
 /** 옆면 바깥 세로 PDU. 자리는 왼쪽(0)·오른쪽(1) 두 곳 */
@@ -130,6 +155,7 @@ export function createPdu(id: string, side: number): { device: Device; sockets: 
   body.position.set(x, (L.y0 + L.y1) / 2, L.z);
   body.castShadow = true;
   body.userData.solid = true;
+  body.userData.deviceId = id;
   g.add(body);
 
   const outletZ = L.z - L.d / 2 - 0.002;
@@ -144,5 +170,6 @@ export function createPdu(id: string, side: number): { device: Device; sockets: 
     sockets.push({ port, mesh, blink: false });
     ports.push(port);
   }
-  return { device: { id, def: DEVICES.pdu, u: null, on: true, ports, group: g, button: null, led: null }, sockets };
+  const power = powerOf(id, DEVICES.pdu, 'pdu', ports);
+  return { device: { id, def: DEVICES.pdu, u: null, on: true, ports, group: g, body, button: null, led: null, power }, sockets };
 }

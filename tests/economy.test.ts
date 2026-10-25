@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { CABLES, DEVICES, type DeviceDefId } from '../src/data/catalog';
-import { paybackSec, priceOf } from '../src/game/economy';
+import { paybackSec, priceOf, spend, tick } from '../src/game/economy';
+import { createGameState } from '../src/game/state';
 
 const SERVERS: DeviceDefId[] = ['server-entry', 'server-web', 'server-storage', 'server-gpu'];
 
@@ -46,5 +47,26 @@ describe('인플레이션 억제', () => {
 
   it('30분에 초당 수익이 500원을 넘지 않음 (제약 없는 상한)', () => {
     expect(simulate(30).income).toBeLessThan(500);
+  });
+});
+
+describe('tick', () => {
+  it('실제 경과 시간만큼 더하고 같은 시간을 두 번 세지 않음', () => {
+    const s = createGameState(1000);
+    tick(s, 1250, 4);
+    expect(s.money).toBeCloseTo(1);
+    tick(s, 1250, 4);
+    expect(s.money).toBeCloseTo(1);
+    // 탭을 10분 숨겼다 돌아옴
+    tick(s, 1250 + 600_000, 4);
+    expect(s.money).toBeCloseTo(2401);
+  });
+
+  it('spend: 모자라면 안 빠짐', () => {
+    const s = createGameState(0, 100);
+    expect(spend(s, 150)).toBe(false);
+    expect(s.money).toBe(100);
+    expect(spend(s, 60)).toBe(true);
+    expect(s.money).toBe(40);
   });
 });

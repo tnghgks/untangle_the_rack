@@ -139,3 +139,44 @@ html, body {
   border-radius: 6px;
 }
 .hud-debug[hidden] { display: none; }
+
+.hud-inspector {
+  top: 0;
+  left: 0;
+  width: 220px;
+  padding: 8px 12px 10px;
+  font-size: 0.85rem;
+  font-variant-numeric: tabular-nums;
+}
+.hud-inspector[hidden] { display: none; }
+.hud-inspector .head { display: flex; align-items: baseline; gap: 6px; margin-bottom: 4px; }
+.hud-inspector .head small { color: var(--muted); }
+.hud-inspector .x {
+  margin-left: auto;
+  font: inherit;
+  font-size: 1.1rem;
+  line-height: 1;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.hud-inspector .status { font-weight: 600; }
+.hud-inspector .s-running { color: #3cff7a; }
+.hud-inspector .s-booting { color: #ffc23c; }
+.hud-inspector .s-nolink { color: #ff6a5c; }
+.hud-inspector .s-off, .hud-inspector .s-nopower { color: var(--muted); }
+.hud-inspector .help { color: var(--muted); font-size: 0.78rem; margin-bottom: 4px; }
+.hud-inspector .line { color: var(--text); }
+.hud-inspector .act {
+  margin-top: 8px;
+  width: 100%;
+  font: inherit;
+  color: var(--text);
+  background: var(--btn-bg);
+  border: 1px solid var(--panel-border);
+  border-radius: 7px;
+  padding: 5px 0;
+  cursor: pointer;
+}
+.hud-inspector .act:hover { background: var(--btn-on); }

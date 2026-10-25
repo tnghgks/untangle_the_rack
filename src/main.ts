@@ -10,7 +10,9 @@ import { CABLES, DEVICES, type DeviceDefId } from './data/catalog';
 import { events } from './core/events';
 import { createHud } from './ui/hud';
 import { createShop } from './ui/shop';
-import { priceOf } from './game/economy';
+import { createInspector } from './ui/inspector';
+import { priceOf, spend, tick } from './game/economy';
+import { boughtCount, createGameState } from './game/state';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#stage')!;
 const hudRoot = document.querySelector<HTMLElement>('#hud')!;
@@ -25,8 +27,28 @@ const rig = createCameraRig(stage.camera, canvas);
 const hud = createHud(hudRoot);
 const room = createStartRoom(stage.scene, stage.rack);
 if (stress > 0) room.addStress(stress);
-// 입력 우선순위는 등록 순서: 장비 들기 → 전원 버튼 → 케이블 드래그 → OrbitControls
-const placement = createPlacement({ canvas, camera: stage.camera, controls: rig.controls, room });
+const state = createGameState(Date.now());
+const price = (id: DeviceDefId) => priceOf(DEVICES[id], boughtCount(state, id));
+/** 돈을 내고 구매 횟수를 셈. 모자라면 false */
+const buy = (id: DeviceDefId): boolean => {
+  if (!spend(state, price(id))) return false;
+  state.bought[id] = boughtCount(state, id) + 1;
+  return true;
+};
+
+// 입력 우선순위는 등록 순서: 장비 들기 → 전원 버튼 → 케이블 드래그 → 장비 정보 카드 → OrbitControls
+const placement = createPlacement({
+  canvas,
+  camera: stage.camera,
+  controls: rig.controls,
+  room,
+  // 장비 값은 끼울 때 낸다 (들기 취소 = 환불 필요 없음)
+  install(id, u) {
+    if (!room.slots.canPlace(u, DEVICES[id].sizeU)) return;
+    if (!buy(id)) return flashHint('돈이 모자라요');
+    room.install(id, u);
+  },
+});
 createPowerButtons(canvas, stage.camera, rig.controls, room);
 createCableDrag({
   canvas,
@@ -35,6 +57,7 @@ createCableDrag({
   world: room.world,
   showPortHint: room.showPortHint,
 });
+const inspector = createInspector({ root: hudRoot, canvas, camera: stage.camera, controls: rig.controls, room });
 
 let hintTimer = 0;
 const flashHint = (text: string) => {
@@ -49,26 +72,19 @@ events.on('placement:held', (id) => {
 });
 events.on('device:installed', () => flashHint('설치 완료 · 뒷면에서 전원선·랜선을 연결하고 앞면 전원 버튼을 누르세요'));
 
-// 구매 횟수 → 다음 가격. 시작 지급 장비는 이 구독 전에 설치돼 세지 않는다. M3에서 GameState로 옮김
-const bought: Partial<Record<DeviceDefId, number>> = {};
-const countBuy = (id: DeviceDefId) => (bought[id] = (bought[id] ?? 0) + 1);
-events.on('device:installed', ({ deviceId }) => {
-  const d = room.device(deviceId);
-  if (d) countBuy(d.def.id);
-});
-
-// 해금 없음: 막히는 건 자리 부족뿐. M3 전까지 돈은 빠지지 않음
+// 해금 없음: 막히는 건 자리 부족과 돈뿐
 const shop = createShop(hud.shopPanel, {
   blockedReason: (def) =>
     def.sizeU === 0
-      ? room.freePduSide() === null ? '옆면 자리 없음' : null
-      : room.slots.firstFree(def.sizeU) === null ? `빈 ${def.sizeU}U 자리 없음` : null,
-  priceOf: (id) => priceOf(DEVICES[id], bought[id] ?? 0),
+      ? room.freePduSide() === null ? '옆면 자리 없음' : state.money < price(def.id) ? '돈 부족' : null
+      : room.slots.firstFree(def.sizeU) === null ? `빈 ${def.sizeU}U 자리 없음` : state.money < price(def.id) ? '돈 부족' : null,
+  cableBlocked: (id) => (state.money < CABLES[id].price ? '돈 부족' : null),
+  priceOf: price,
   onBuyDevice: (id) => {
     if (id === 'pdu') {
       // 옆면은 고를 자리가 없어 바로 붙임
-      if (!room.addPdu()) return;
-      countBuy(id);
+      if (room.freePduSide() === null || !buy(id)) return;
+      room.addPdu();
       shop.refresh();
       flashHint('PDU를 랙 옆면에 달았어요 · 뒷면에서 콘센트에 전원선을 꽂으세요');
       return;
@@ -77,19 +93,35 @@ const shop = createShop(hud.shopPanel, {
     else placement.hold(id);
   },
   onBuyCable: (id) => {
+    if (!spend(state, CABLES[id].price)) return;
     room.spawnCable(CABLES[id].kind);
+    shop.refresh();
     flashHint(`${CABLES[id].name}이 랙 뒤 바닥에 놓였어요`);
   },
 });
-if (debug) Object.assign(window, { room, rig, stage, placement });
+if (debug) Object.assign(window, { room, rig, stage, placement, state, inspector });
 if (stress > 0) {
   window.addEventListener('keydown', (e) => {
     if (e.key === 'r' || e.key === 'R') room.redrop();
   });
 }
 
-// M0: 더미 수치. M3에서 GameState·economy로 교체
-const model = { money: 0, incomePerSec: 1, powerUsed: 180, powerCap: 3000 };
+// 수익: 밀린 시간을 먼저 직전 수익으로 더하고(부팅이 숨긴 탭에서 끝나도 그 시간은 안 셈) 가동 판정을 갱신
+const advance = () => {
+  const now = Date.now();
+  tick(state, now, room.summary.incomePerSec);
+  room.updatePower(now);
+};
+// 배선·전원·설치가 바뀌면 바로 LED·수익에 반영
+events.on('cable:plugged', advance);
+events.on('cable:unplugged', advance);
+events.on('device:power', advance);
+events.on('device:installed', advance);
+// 렌더 루프가 멈추는 백그라운드 탭에서도 돌도록 (브라우저가 1초 이상으로 늦춰도 시간 차이로 계산)
+window.setInterval(() => {
+  advance();
+  shop.refresh();
+}, 250);
 let lastRealMs = Date.now();
 
 const perf = { physMs: 0, frames: 0, fps: 0, since: performance.now() };
@@ -103,9 +135,10 @@ startLoop({
   render() {
     const now = Date.now();
     rig.update((now - lastRealMs) / 1000);
-    model.money += model.incomePerSec * ((now - lastRealMs) / 1000);
     lastRealMs = now;
-    hud.setModel(model);
+    advance();
+    hud.setModel({ money: state.money, ...room.summary });
+    inspector.update();
     room.sync(performance.now() / 1000);
     stage.renderer.render(stage.scene, stage.camera);
 
