@@ -8,6 +8,7 @@ import { createRng } from '../core/rng';
 import type { DeviceDefId } from '../data/catalog';
 import { CABLE_DEFAULT_LENGTH, RACK_HEIGHT } from '../data/units';
 import { BOOT_MS, resetBreaker, updatePower, type PowerSummary } from '../game/power';
+import { round3, type SaveData, type SavedCable, type SavedDevice } from '../game/save';
 import { createPdu, createRackDevice, PDU_SIDES, setDeviceLed, setDevicePower, type Device, type Socket } from '../rack/device';
 import { RackSlots } from '../rack/rack';
 import { collectColliders } from './scene';
@@ -48,9 +49,8 @@ export class Room {
     this.world.colliders.push(...collectColliders(rack));
   }
 
-  /** 빈 칸이면 끼우고 장비를 돌려줌 */
-  install(defId: DeviceDefId, u: number): Device | null {
-    const id = `${defId}#${++this.serial}`;
+  /** 빈 칸이면 끼우고 장비를 돌려줌. id는 불러오기에서만 지정 (포트 id가 같아야 케이블을 다시 꽂음) */
+  install(defId: DeviceDefId, u: number, id = `${defId}#${++this.serial}`): Device | null {
     const { device, sockets } = createRackDevice(id, defId, u);
     if (!this.slots.place(id, u, device.def.sizeU)) return null;
     this.rack.add(device.group);
@@ -61,15 +61,14 @@ export class Room {
 
   /** 비어 있는 옆면 자리 (없으면 null) */
   freePduSide(): number | null {
-    const used = this.devices.filter((d) => d.def.id === 'pdu').length;
-    return used < PDU_SIDES ? used : null;
+    for (let side = 0; side < PDU_SIDES; side++) if (!this.devices.some((d) => d.side === side)) return side;
+    return null;
   }
 
   /** 빈 옆면에 PDU를 붙임 (자리 없으면 null) */
-  addPdu(): Device | null {
-    const side = this.freePduSide();
-    if (side === null) return null;
-    const { device, sockets } = createPdu(`pdu#${++this.serial}`, side);
+  addPdu(side = this.freePduSide(), id = `pdu#${++this.serial}`): Device | null {
+    if (side === null || this.devices.some((d) => d.side === side)) return null;
+    const { device, sockets } = createPdu(id, side);
     this.scene.add(device.group);
     this.addDevice(device, sockets);
     return device;
@@ -125,10 +124,10 @@ export class Room {
     events.emit('pdu:reset', { deviceId: pdu.id });
   }
 
-  private addCable(kind: PortKind): Cable {
+  private addCable(kind: PortKind, saved?: SavedCable): Cable {
     const n = this.world.cables.length;
-    const color = kind === 'lan' ? LAN_COLORS[n % LAN_COLORS.length] : POWER_COLOR;
-    const c = createCable(`cable-${n}`, kind, CABLE_DEFAULT_LENGTH, color);
+    const color = saved?.color ?? (kind === 'lan' ? LAN_COLORS[n % LAN_COLORS.length] : POWER_COLOR);
+    const c = createCable(saved?.id ?? `cable-${n}`, kind, CABLE_DEFAULT_LENGTH, color);
     this.world.cables.push(c);
     const m = new CableMesh(c);
     this.scene.add(m.group);
@@ -163,6 +162,52 @@ export class Room {
     plug(c, 0, a);
     plug(c, 1, b);
     return c;
+  }
+
+  /** 저장할 장비·케이블 (돈·구매 기록은 main이 GameState에서 붙임) */
+  snapshot(): Pick<SaveData, 'serial' | 'spawned' | 'devices' | 'cables'> {
+    const devices: SavedDevice[] = this.devices.map((d) => ({
+      id: d.id, defId: d.def.id, u: d.u, side: d.side, on: d.on, tripped: d.power.tripped,
+    }));
+    const cables: SavedCable[] = this.world.cables
+      .filter((c) => !this.stressCables.includes(c))
+      .map((c) => ({
+        id: c.id, kind: c.kind, color: c.color,
+        ends: [c.ends[0]?.id ?? null, c.ends[1]?.id ?? null],
+        nodes: Array.from(c.rope.pos, round3),
+      }));
+    return { serial: this.serial, spawned: this.spawned, devices, cables };
+  }
+
+  /** 불러오기: 저장된 id·자리로 장비를, 마디 좌표 그대로 케이블을 다시 만든다 */
+  restore(data: Pick<SaveData, 'serial' | 'spawned' | 'devices' | 'cables'>): void {
+    for (const d of data.devices) {
+      const device = d.defId === 'pdu' ? this.addPdu(d.side, d.id) : d.u === null ? null : this.install(d.defId, d.u, d.id);
+      if (!device) continue;
+      if (device.def.id !== 'pdu') setDevicePower(device, d.on);
+      device.power.tripped = d.tripped;
+    }
+    const portById = new Map(this.world.ports.map((p) => [p.id, p]));
+    for (const saved of data.cables) {
+      const c = this.addCable(saved.kind, saved);
+      const { rope } = c;
+      if (saved.nodes.length === rope.pos.length) {
+        rope.pos.set(saved.nodes);
+        rope.prev.set(saved.nodes);
+        rope.wake();
+      } else {
+        // 케이블 길이가 바뀐 옛 저장: 꺾은선으로 다시 깐다
+        const pts: Vec3[] = [];
+        for (let i = 0; i < saved.nodes.length; i += 3) pts.push([saved.nodes[i], saved.nodes[i + 1], saved.nodes[i + 2]]);
+        if (pts.length >= 2) rope.setFromPolyline(pts);
+      }
+      saved.ends.forEach((id, end) => {
+        const port = id === null ? undefined : portById.get(id);
+        if (port) plug(c, end as 0 | 1, port);
+      });
+    }
+    this.serial = Math.max(this.serial, data.serial);
+    this.spawned = data.spawned;
   }
 
   /** 측정용: 랙 위에서 떨어지는 케이블 n가닥 (redrop으로 다시) */
@@ -204,6 +249,22 @@ function emissive(s: Socket): THREE.Color {
   return (s.mesh.material as THREE.MeshStandardMaterial).emissive;
 }
 
+/** 켜진 장비를 BOOT_MS 전에 켠 것으로 → 지금 판정에서 바로 가동 */
+function bootNow(room: Room): void {
+  const now = Date.now();
+  room.updatePower(now - BOOT_MS);
+  room.updatePower(now);
+}
+
+/** 저장에서 방을 다시 만듦. 켜진 장비는 이미 부팅된 것으로, 케이블은 원래 모양에서 조금만 안정화 */
+export function restoreRoom(scene: THREE.Scene, rack: THREE.Group, data: SaveData): Room {
+  const room = new Room(scene, rack);
+  room.restore(data);
+  bootNow(room);
+  for (let i = 0; i < 20; i++) room.world.step(1 / 60);
+  return room;
+}
+
 /** 계획서 4.4 시작 상태: 옆면 PDU, U1 스위치 8포트, U3 엔트리 서버. 전원선 2·랜선 1이 꽂혀 켜진 채 */
 export function createStartRoom(scene: THREE.Scene, rack: THREE.Group): Room {
   const room = new Room(scene, rack);
@@ -217,7 +278,7 @@ export function createStartRoom(scene: THREE.Scene, rack: THREE.Group): Room {
   room.setPower(sw, true);
   room.setPower(entry, true);
   // 시작 장비는 이미 부팅이 끝난 상태로 → 처음부터 초당 1원
-  room.updatePower(Date.now() - BOOT_MS);
+  bootNow(room);
   // 꽂힌 케이블이 늘어진 모양으로 자리 잡게 미리 돌림
   for (let i = 0; i < 240; i++) room.world.step(1 / 60);
   return room;

@@ -33,6 +33,8 @@ export interface Device {
   def: DeviceDef;
   /** 아래쪽 U (PDU는 null) */
   u: number | null;
+  /** PDU 옆면 자리 (랙 장비는 null) */
+  side: number | null;
   on: boolean;
   ports: Port[];
   group: THREE.Group;
@@ -117,7 +119,7 @@ export function createRackDevice(id: string, defId: DeviceDefId, u: number): { d
   });
 
   const power = powerOf(id, def, isSwitch ? 'switch' : 'server', ports);
-  const device: Device = { id, def, u, on: false, ports, group: g, body, button, led, power };
+  const device: Device = { id, def, u, side: null, on: false, ports, group: g, body, button, led, power };
   return { device, sockets };
 }
 
@@ -177,5 +179,5 @@ export function createPdu(id: string, side: number): { device: Device; sockets: 
     ports.push(port);
   }
   const power = powerOf(id, DEVICES.pdu, 'pdu', ports);
-  return { device: { id, def: DEVICES.pdu, u: null, on: true, ports, group: g, body, button: null, led, power }, sockets };
+  return { device: { id, def: DEVICES.pdu, u: null, side, on: true, ports, group: g, body, button: null, led, power }, sockets };
 }

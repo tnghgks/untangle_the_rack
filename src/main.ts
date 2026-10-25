@@ -3,7 +3,7 @@ import { startLoop } from './core/loop';
 import { createStage } from './view/scene';
 import { createCameraRig } from './view/camera';
 import { createCableDrag } from './view/drag';
-import { createStartRoom } from './view/room';
+import { createStartRoom, restoreRoom } from './view/room';
 import { createPowerButtons } from './view/powerButton';
 import { createPlacement } from './rack/placement';
 import { CABLES, DEVICES, type DeviceDefId } from './data/catalog';
@@ -13,21 +13,33 @@ import { createShop } from './ui/shop';
 import { createInspector } from './ui/inspector';
 import { priceOf, spend, tick } from './game/economy';
 import { boughtCount, createGameState } from './game/state';
+import { loadSave, SAVE_KEY, SAVE_VERSION, writeSave, type SaveData } from './game/save';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#stage')!;
 const hudRoot = document.querySelector<HTMLElement>('#hud')!;
 
-// ?stress=50 → 케이블 50가닥 추가 (R로 다시 떨어뜨림), ?debug → 성능 표시
+// ?stress=50 → 케이블 50가닥 추가 (R로 다시 떨어뜨림, 저장 안 함), ?debug → 성능 표시, ?reset → 저장 지우고 새로 시작
 const params = new URLSearchParams(location.search);
 const stress = Math.max(0, Math.min(200, Number(params.get('stress')) || 0));
 const debug = params.has('debug') || stress > 0;
+// 저장소가 막힌 환경(사생활 모드 등)에선 localStorage 접근 자체가 throw → 저장 없이 진행
+const store = (() => {
+  try {
+    return window.localStorage;
+  } catch {
+    return null;
+  }
+})();
+if (params.has('reset')) store?.removeItem(SAVE_KEY);
+const saved = stress > 0 || !store ? null : loadSave(store);
 
 const stage = createStage(canvas);
 const rig = createCameraRig(stage.camera, canvas);
 const hud = createHud(hudRoot);
-const room = createStartRoom(stage.scene, stage.rack);
+const room = saved ? restoreRoom(stage.scene, stage.rack, saved) : createStartRoom(stage.scene, stage.rack);
 if (stress > 0) room.addStress(stress);
-const state = createGameState(Date.now());
+const state = createGameState(Date.now(), saved?.money ?? 0);
+if (saved) state.bought = { ...saved.bought };
 const price = (id: DeviceDefId) => priceOf(DEVICES[id], boughtCount(state, id));
 /** 돈을 내고 구매 횟수를 셈. 모자라면 false */
 const buy = (id: DeviceDefId): boolean => {
@@ -99,7 +111,7 @@ const shop = createShop(hud.shopPanel, {
     flashHint(`${CABLES[id].name}이 랙 뒤 바닥에 놓였어요`);
   },
 });
-if (debug) Object.assign(window, { room, rig, stage, placement, state, inspector });
+if (debug) Object.assign(window, { room, rig, stage, placement, state, inspector, save: () => save() });
 if (stress > 0) {
   window.addEventListener('keydown', (e) => {
     if (e.key === 'r' || e.key === 'R') room.redrop();
@@ -125,6 +137,19 @@ window.setInterval(() => {
   shop.refresh();
 }, 250);
 let lastRealMs = Date.now();
+
+// 저장: 10초마다 + 탭을 숨기거나 떠날 때. 측정 모드(?stress)는 저장하지 않음
+const save = () => {
+  if (stress > 0 || !store) return;
+  advance();
+  const data: SaveData = { v: SAVE_VERSION, money: state.money, bought: { ...state.bought }, ...room.snapshot() };
+  writeSave(store, data);
+};
+window.setInterval(save, 10_000);
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'hidden') save();
+});
+window.addEventListener('pagehide', save);
 
 const perf = { physMs: 0, frames: 0, fps: 0, since: performance.now() };
 
