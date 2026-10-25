@@ -116,30 +116,6 @@ function createRack(): THREE.Group {
   return g;
 }
 
-/** 장비 몸체 깊이 (앞뒤 레일 사이). 뒷면 z = -DEVICE_DEPTH / 2 */
-export const DEVICE_DEPTH = RACK.depth - 0.16;
-
-/** M2 카탈로그 전까지 쓰는 자리표시 장비: 상자 + 앞면 LED */
-export function createPlaceholderDevice(name: string, u: number, sizeU: number, color: number): THREE.Group {
-  const g = new THREE.Group();
-  g.name = name;
-  const h = sizeU * U - 0.002;
-  const d = DEVICE_DEPTH;
-  const body = box(RACK.railWidth - 0.01, h, d, new THREE.MeshStandardMaterial({ color, metalness: 0.5, roughness: 0.5 }), 0, 0, 0);
-  g.add(body);
-
-  // 앞면 LED (전원 켜짐 표시)
-  const led = new THREE.Mesh(
-    new THREE.SphereGeometry(0.004, 8, 8),
-    new THREE.MeshBasicMaterial({ color: 0x3cff7a }),
-  );
-  led.position.set(RACK.railWidth / 2 - 0.03, 0, d / 2 + 0.002);
-  g.add(led);
-
-  g.position.set(0, uBottomY(u) + h / 2 + 0.001, 0);
-  return g;
-}
-
 /** userData.solid 메시들의 월드 경계 상자 → 케이블 충돌용 */
 export function collectColliders(root: THREE.Object3D): Aabb[] {
   root.updateMatrixWorld(true);

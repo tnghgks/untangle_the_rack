@@ -62,7 +62,43 @@ html, body {
   width: 240px;
   padding: 10px 14px;
 }
-.hud-shop h2 { margin: 0 0 6px; font-size: 1rem; }
+.hud-shop h2 { margin: 0 0 8px; font-size: 1rem; }
+.hud-shop h3 { margin: 12px 0 6px; font-size: 0.85rem; color: var(--muted); font-weight: 600; }
+.hud-shop { max-height: calc(100vh - 90px); overflow-y: auto; }
+.shop-list { display: flex; flex-direction: column; gap: 6px; }
+.shop-card {
+  font: inherit;
+  color: var(--text);
+  text-align: left;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 2px 8px;
+  padding: 7px 10px;
+  background: var(--btn-bg);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  cursor: pointer;
+}
+.shop-card:hover:not(:disabled) { border-color: var(--panel-border); }
+.shop-card:disabled { opacity: 0.45; cursor: default; }
+.shop-card.held { background: var(--btn-on); border-color: rgba(60, 255, 122, 0.4); }
+.shop-card .name { font-weight: 600; font-size: 0.92rem; }
+.shop-card .name small { color: var(--muted); font-weight: 400; }
+.shop-card .price { font-variant-numeric: tabular-nums; font-size: 0.9rem; }
+.shop-card .meta { grid-column: 1 / -1; color: var(--muted); font-size: 0.78rem; }
+
+.hud-hint {
+  position: absolute;
+  top: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 6px 14px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.6);
+  font-size: 0.9rem;
+  white-space: nowrap;
+}
+.hud-hint[hidden] { display: none; }
 .muted { color: var(--muted); font-size: 0.85rem; margin: 0; }
 
 .hud-toolbar {
@@ -88,7 +124,8 @@ html, body {
 
 @media (max-width: 640px) {
   .hud-top { gap: 10px; font-size: 0.85rem; flex-wrap: wrap; right: 12px; }
-  .hud-shop { top: auto; bottom: 64px; width: auto; left: 12px; }
+  .hud-shop { top: auto; bottom: 64px; width: auto; left: 12px; max-height: 40vh; }
+  .hud-hint { white-space: normal; width: calc(100% - 32px); text-align: center; top: 90px; }
 }
 
 .hud-debug {

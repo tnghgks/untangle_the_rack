@@ -13,6 +13,10 @@ export interface HudModel {
 
 export interface Hud {
   setModel(m: HudModel): void;
+  /** 상점 패널 (내용은 shop.ts가 채움) */
+  shopPanel: HTMLElement;
+  /** 화면 아래 안내 문구 (null = 숨김) */
+  setHint(text: string | null): void;
   /** 개발용 성능 표시 (왼쪽 아래). 처음 호출될 때 나타남 */
   setDebug(text: string): void;
 }
@@ -24,10 +28,8 @@ export function createHud(root: HTMLElement): Hud {
       <span class="stat rate" data-k="rate"></span>
       <span class="stat power" data-k="power"></span>
     </header>
-    <aside class="hud-panel hud-shop">
-      <h2>상점</h2>
-      <p class="muted">M2에서 장비 카드가 들어옵니다</p>
-    </aside>
+    <aside class="hud-panel hud-shop"></aside>
+    <div class="hud-hint" hidden></div>
     <nav class="hud-panel hud-toolbar">
       <div class="group" role="group" aria-label="작업 시점">
         <button data-view="front">앞면</button>
@@ -46,6 +48,7 @@ export function createHud(root: HTMLElement): Hud {
   const rate = field('rate');
   const power = field('power');
   const debug = root.querySelector<HTMLElement>('.hud-debug')!;
+  const hint = root.querySelector<HTMLElement>('.hud-hint')!;
 
   const viewButtons = root.querySelectorAll<HTMLButtonElement>('[data-view]');
   viewButtons.forEach((b) => b.addEventListener('click', () => events.emit('view:set', b.dataset.view as ViewMode)));
@@ -54,6 +57,11 @@ export function createHud(root: HTMLElement): Hud {
   });
 
   return {
+    shopPanel: root.querySelector<HTMLElement>('.hud-shop')!,
+    setHint(text) {
+      hint.hidden = text === null;
+      hint.textContent = text ?? '';
+    },
     setModel(m) {
       money.textContent = `💰 ${formatMoney(m.money)}`;
       rate.textContent = formatRate(m.incomePerSec);

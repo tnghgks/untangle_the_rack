@@ -6,14 +6,15 @@ import { RACK_HEIGHT } from '../data/units';
 // 자유 회전은 항상 가능. 앞면/뒷면 버튼은 작업 시점으로 부드럽게 이동만 한다.
 // 사용자가 직접 돌리기 시작하면 모드는 'free'로 돌아간다.
 
-// 랙 중앙보다 조금 아래를 봐서 아래쪽 U가 하단 툴바에 가리지 않게 한다
-const TARGET = new THREE.Vector3(0, RACK_HEIGHT * 0.42, 0);
-const SNAP_DIST = 3.3;
+// 장비는 U1부터 위로 쌓이므로 랙 아래쪽 1/3 높이를 봐서 아래 U가 하단 툴바에 붙지 않게 한다
+const WORK_Y = RACK_HEIGHT * 0.3;
+const TARGET = new THREE.Vector3(0, WORK_Y, 0);
+const SNAP_DIST = 2.7;
 const TWEEN_SEC = 0.6;
 
 const PRESETS: Record<ViewMode, THREE.Vector3> = {
-  front: new THREE.Vector3(0, RACK_HEIGHT * 0.42, SNAP_DIST),
-  back: new THREE.Vector3(0, RACK_HEIGHT * 0.42, -SNAP_DIST),
+  front: new THREE.Vector3(0, WORK_Y, SNAP_DIST),
+  back: new THREE.Vector3(0, WORK_Y, -SNAP_DIST),
   free: new THREE.Vector3(2.3, RACK_HEIGHT * 0.85, 2.8),
 };
 

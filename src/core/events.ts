@@ -7,6 +7,10 @@ export interface GameEvents {
   'view:changed': ViewMode;
   'cable:plugged': { cableId: string; portId: string };
   'cable:unplugged': { cableId: string; portId: string };
+  'device:installed': { deviceId: string };
+  'device:power': { deviceId: string; on: boolean };
+  /** 상점에서 장비를 든/내려놓은 상태 (null = 빈손) */
+  'placement:held': string | null;
 }
 
 type Handler<T> = (payload: T) => void;
