@@ -5,8 +5,9 @@ import { createCameraRig } from './view/camera';
 import { createCableDrag } from './view/drag';
 import { createStartRoom, restoreRoom } from './view/room';
 import { createPowerButtons } from './view/powerButton';
+import { createHover } from './view/hover';
 import { createPlacement, type MovingDevice } from './rack/placement';
-import { CABLES, DEVICES, type DeviceDefId } from './data/catalog';
+import { CABLES, DEVICES, START_MONEY, type DeviceDefId } from './data/catalog';
 import { events } from './core/events';
 import { createHud } from './ui/hud';
 import { createShop } from './ui/shop';
@@ -41,10 +42,10 @@ const hud = createHud(hudRoot, () => {
   resetting = true;
   store?.removeItem(SAVE_KEY);
   location.reload();
-});
+}, !saved && stress === 0);
 const room = saved ? restoreRoom(stage.scene, stage.rack, saved) : createStartRoom(stage.scene, stage.rack);
 if (stress > 0) room.addStress(stress);
-const state = createGameState(Date.now(), saved?.money ?? 0);
+const state = createGameState(Date.now(), saved?.money ?? START_MONEY);
 if (saved) state.bought = { ...saved.bought };
 const price = (id: DeviceDefId) => priceOf(DEVICES[id], boughtCount(state, id));
 /** 돈을 내고 구매 횟수를 셈. 모자라면 false */
@@ -100,6 +101,7 @@ const inspector = createInspector({
     placement.hold(device.def.id, moving);
   },
 });
+createHover({ canvas, camera: stage.camera, room, busy: () => placement.held !== null });
 
 let hintTimer = 0;
 const flashHint = (text: string) => {

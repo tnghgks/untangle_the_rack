@@ -26,7 +26,7 @@ export class CableMesh {
   /** 곡선 위 링 중심점 */
   private readonly curve: Float32Array;
   private readonly rings: number;
-  private readonly plugs: [THREE.Mesh, THREE.Mesh];
+  readonly plugs: [THREE.Mesh, THREE.Mesh];
   private synced = -1;
 
   constructor(readonly cable: Cable) {

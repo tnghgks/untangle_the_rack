@@ -3,6 +3,7 @@ import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js
 import { events } from '../core/events';
 import type { PowerStatus } from '../game/power';
 import { DEVICE_DEPTH, DEVICE_WIDTH, PDU_LAYOUT, type Device } from '../rack/device';
+import { pickDevice } from '../view/pick';
 import type { Room } from '../view/room';
 import { formatRate } from './format';
 
@@ -41,8 +42,6 @@ export function createInspector({ root, canvas, camera, controls, room, onRemove
   card.hidden = true;
   root.append(card);
 
-  const raycaster = new THREE.Raycaster();
-  const ndc = new THREE.Vector2();
   const anchor = new THREE.Vector3();
   let device: Device | null = null;
   let down: { x: number; y: number; id: number } | null = null;
@@ -62,13 +61,7 @@ export function createInspector({ root, canvas, camera, controls, room, onRemove
     card.hidden = true;
   };
 
-  const pick = (x: number, y: number): Device | null => {
-    const rect = canvas.getBoundingClientRect();
-    ndc.set(((x - rect.left) / rect.width) * 2 - 1, -((y - rect.top) / rect.height) * 2 + 1);
-    raycaster.setFromCamera(ndc, camera);
-    const hit = raycaster.intersectObjects(room.devices.map((d) => d.body), false)[0];
-    return hit ? room.device(hit.object.userData.deviceId) ?? null : null;
-  };
+  const pick = (x: number, y: number) => pickDevice(room.devices, camera, x, y, canvas.getBoundingClientRect());
 
   // 앞 단계(장비 들기·전원 버튼)가 잡으면 stopImmediatePropagation으로 여기까지 안 오고,
   // 케이블을 잡으면 controls.enabled가 꺼져 있다
@@ -100,7 +93,9 @@ export function createInspector({ root, canvas, camera, controls, room, onRemove
 
   const render = (d: Device): string => {
     const p = d.power;
-    const [label, help] = STATUS_TEXT[p.status];
+    const [label, baseHelp] = STATUS_TEXT[p.status];
+    // 꺼져 있을 때: 배선이 끝났는지에 따라 (뒷면 파란 등 = 배선 완료)
+    const help = p.status === 'off' ? (p.ready ? '배선 완료 · 앞면 전원 버튼을 누르면 가동' : '뒷면 전원선·랜선을 연결하고 앞면 전원 버튼을 누르세요') : baseHelp;
     const where = d.u !== null ? `U${d.u}${d.def.sizeU > 1 ? `–${d.u + d.def.sizeU - 1}` : ''}` : '옆면';
     const used = (kind: 'lan' | 'power') => {
       const ports = d.ports.filter((x) => x.kind === kind);

@@ -122,12 +122,8 @@ export function createCableDrag({ canvas, camera, controls, world, showPortHint 
   canvas.addEventListener('pointermove', (e) => {
     lastX = e.clientX;
     lastY = e.clientY;
-    if (drag) {
-      updateTarget();
-    } else if (e.buttons === 0) {
-      const over = pickCable(world.cables, camera, e.clientX, e.clientY, canvas.getBoundingClientRect());
-      canvas.style.cursor = over ? 'grab' : '';
-    }
+    // 잡기 전 커서·강조는 hover.ts
+    if (drag) updateTarget();
   });
 
   canvas.addEventListener('pointerup', (e) => {

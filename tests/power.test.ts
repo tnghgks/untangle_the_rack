@@ -11,7 +11,7 @@ function dev(id: string, role: PowerRole, opts: Partial<PowerDevice> = {}): Powe
   return {
     id, role, on: role === 'pdu', watts: role === 'server' ? 250 : role === 'switch' ? 30 : 0,
     incomePerSec: role === 'server' ? 3 : 0, capacity: role === 'pdu' ? 3000 : 0, tripped: false, load: 0, demand: 0,
-    ports, bootStart: null, status: 'off', ...opts,
+    ports, bootStart: null, status: 'off', ready: false, ...opts,
   };
 }
 
@@ -144,5 +144,26 @@ describe('차단기', () => {
     expect(pdu.tripped).toBe(false);
     expect(srvs[0].status).toBe('booting');
     expect(pdu.load).toBe(280);
+  });
+});
+
+describe('ready (뒷면 파란 등)', () => {
+  it('꺼져 있어도 전원·랜 배선이 끝나면 ready, 랜이 빠지면 아님', () => {
+    const { devs, srv, l } = wired();
+    srv.on = false;
+    updatePower(devs, l, 0);
+    expect(srv.status).toBe('off');
+    expect(srv.ready).toBe(true);
+    l.delete('sw:lan0');
+    l.delete('srv:lan0');
+    updatePower(devs, l, 0);
+    expect(srv.ready).toBe(false);
+  });
+
+  it('차단된 PDU에 꽂혀 있으면 ready 아님', () => {
+    const { devs, pdu, srv, l } = wired();
+    pdu.tripped = true;
+    updatePower(devs, l, 0);
+    expect(srv.ready).toBe(false);
   });
 });

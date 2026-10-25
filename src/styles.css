@@ -57,7 +57,7 @@ html, body {
 .hud-top .power { color: var(--muted); align-self: center; }
 .hud-top .warn { color: #ffc23c; align-self: center; font-weight: 600; }
 .hud-top .warn[hidden] { display: none; }
-.hud-top .new-game {
+.hud-top .new-game, .hud-top .guide-toggle {
   align-self: center;
   font: inherit;
   font-size: 0.78rem;
@@ -68,7 +68,28 @@ html, body {
   padding: 2px 8px;
   cursor: pointer;
 }
-.hud-top .new-game:hover { color: var(--text); background: var(--btn-bg); }
+.hud-top .new-game:hover, .hud-top .guide-toggle:hover { color: var(--text); background: var(--btn-bg); }
+.hud-top .guide-toggle.on { color: var(--text); background: var(--btn-on); border-color: rgba(60, 255, 122, 0.4); }
+
+.hud-guide {
+  top: 64px;
+  left: 12px;
+  width: 340px;
+  max-height: calc(100vh - 150px);
+  overflow-y: auto;
+  padding: 10px 14px 12px;
+  font-size: 0.84rem;
+  line-height: 1.45;
+}
+.hud-guide[hidden] { display: none; }
+.hud-guide .head { display: flex; align-items: baseline; margin-bottom: 4px; }
+.hud-guide .x { margin-left: auto; font: inherit; font-size: 1.1rem; line-height: 1; color: var(--muted); background: none; border: 0; cursor: pointer; }
+.hud-guide p { margin: 0 0 6px; }
+.hud-guide h3 { margin: 10px 0 4px; font-size: 0.82rem; color: var(--muted); font-weight: 600; }
+.hud-guide ol, .hud-guide ul { margin: 0; padding-left: 18px; }
+.hud-guide ul.leds { list-style: none; padding-left: 0; }
+.hud-guide .leds li { display: flex; align-items: center; gap: 8px; }
+.hud-guide .leds i { width: 10px; height: 10px; border-radius: 50%; flex: none; box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.15); }
 
 .hud-shop {
   top: 12px;
@@ -140,6 +161,7 @@ html, body {
   .hud-top { gap: 10px; font-size: 0.85rem; flex-wrap: wrap; right: 12px; }
   .hud-shop { top: auto; bottom: 64px; width: auto; left: 12px; max-height: 40vh; }
   .hud-hint { white-space: normal; width: calc(100% - 32px); text-align: center; top: 90px; }
+  .hud-guide { top: 90px; right: 12px; width: auto; max-height: calc(100vh - 170px); z-index: 1; }
 }
 
 .hud-debug {

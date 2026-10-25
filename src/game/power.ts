@@ -34,6 +34,8 @@ export interface PowerDevice {
   /** 부팅 시작 시각 (ms). 전기 없거나 꺼져 있으면 null */
   bootStart: number | null;
   status: PowerStatus;
+  /** 배선 완료: 전원 포트 ↔ 차단 안 된 PDU, (서버면) 랜 포트 ↔ 스위치. 꺼져 있어도 셈 → "켜면 돈다" 표시용 */
+  ready: boolean;
 }
 
 export interface PowerSummary {
@@ -83,8 +85,10 @@ function evaluate(devices: readonly PowerDevice[], links: ReadonlyMap<string, st
   for (const d of devices) {
     if (d.role === 'pdu') {
       d.status = d.tripped ? 'nopower' : 'running';
+      d.ready = !d.tripped;
       continue;
     }
+    d.ready = !!supplier(d) && (d.role !== 'server' || d.ports.some((p) => p.kind === 'lan' && peerDevice(p.id)?.role === 'switch'));
     if (!d.on) {
       d.bootStart = null;
       d.status = 'off';

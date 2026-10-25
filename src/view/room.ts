@@ -143,7 +143,7 @@ export class Room {
       now,
     );
     for (const d of this.devices) {
-      setDeviceLed(d, d.power.status);
+      setDeviceLed(d);
       if (d.power.tripped && !wasTripped.has(d)) events.emit('pdu:tripped', { deviceId: d.id });
     }
     return this.summary;

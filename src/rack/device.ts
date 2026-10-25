@@ -19,14 +19,20 @@ const SOCKET: Record<PortKind, THREE.Vector3> = {
   power: new THREE.Vector3(0.024, 0.016, 0.006),
 };
 const SOCKET_COLOR: Record<PortKind, number> = { lan: 0x23384d, power: 0x0c0d0f };
-/** 가동 초록 · 부팅 노랑 · 네트워크 없음 빨강 · 꺼짐/전기 없음 어둠 */
-const LED_COLOR: Record<PowerStatus, number> = {
-  off: 0x1d2a22,
-  nopower: 0x1d2a22,
-  booting: 0xffc23c,
-  nolink: 0xff4a3c,
+/**
+ * 상태등 (앞·뒷면 같음): 가동 초록 · 부팅 노랑 · 켰는데 안 돎(전기·네트워크 없음) 빨강 ·
+ * 꺼져 있지만 배선 완료(켜면 돎) 파랑 · 꺼져 있고 배선도 덜 됨 어둠. 가이드 패널에 같은 표가 있음
+ */
+export type LedState = 'running' | 'booting' | 'fault' | 'ready' | 'dark';
+export const LED_COLOR: Record<LedState, number> = {
   running: 0x3cff7a,
+  booting: 0xffc23c,
+  fault: 0xff4a3c,
+  ready: 0x3c9cff,
+  dark: 0x1d2a22,
 };
+/** 뒷면 상태등 x: 랜 포트(왼쪽 묶음)와 전원 포트(오른쪽 끝) 사이 */
+const BACK_LED_X = 0.13;
 
 export interface Device {
   id: string;
@@ -42,6 +48,8 @@ export interface Device {
   body: THREE.Mesh;
   button: THREE.Mesh | null;
   led: THREE.Mesh | null;
+  /** 뒷면 상태등 (배선하면서 바로 보이게). PDU는 null */
+  backLed: THREE.Mesh | null;
   /** 가동 판정 상태 (power.ts가 갱신) */
   power: PowerDevice;
 }
@@ -102,9 +110,12 @@ export function createRackDevice(id: string, defId: DeviceDefId, u: number): { d
   button.userData.deviceId = id;
   g.add(button);
 
-  const led = new THREE.Mesh(new THREE.SphereGeometry(0.004, 8, 8), new THREE.MeshBasicMaterial({ color: LED_COLOR.off }));
+  const led = new THREE.Mesh(new THREE.SphereGeometry(0.004, 8, 8), new THREE.MeshBasicMaterial({ color: LED_COLOR.dark }));
   led.position.set(DEVICE_WIDTH / 2 - 0.03, cy, frontZ + 0.002);
   g.add(led);
+  const backLed = new THREE.Mesh(new THREE.SphereGeometry(0.005, 8, 8), new THREE.MeshBasicMaterial({ color: LED_COLOR.dark }));
+  backLed.position.set(BACK_LED_X, cy, BACK_Z - 0.002);
+  g.add(backLed);
 
   const isSwitch = def.id.startsWith('switch');
   const sockets: Socket[] = [];
@@ -119,14 +130,14 @@ export function createRackDevice(id: string, defId: DeviceDefId, u: number): { d
   });
 
   const power = powerOf(id, def, isSwitch ? 'switch' : 'server', ports);
-  const device: Device = { id, def, u, side: null, on: false, ports, group: g, body, button, led, power };
+  const device: Device = { id, def, u, side: null, on: false, ports, group: g, body, button, led, backLed, power };
   return { device, sockets };
 }
 
 function powerOf(id: string, def: DeviceDef, role: PowerDevice['role'], ports: Port[]): PowerDevice {
   return {
     id, role, on: role === 'pdu', watts: def.watts, incomePerSec: def.incomePerSec, capacity: def.capacity ?? 0,
-    tripped: false, load: 0, demand: 0, ports: ports.map((p) => ({ id: p.id, kind: p.kind })), bootStart: null, status: 'off',
+    tripped: false, load: 0, demand: 0, ports: ports.map((p) => ({ id: p.id, kind: p.kind })), bootStart: null, status: 'off', ready: false,
   };
 }
 
@@ -137,10 +148,18 @@ export function setDevicePower(device: Device, on: boolean): void {
   if (device.button) device.button.position.z = DEVICE_DEPTH / 2 + (on ? 0.001 : 0.002);
 }
 
-export function setDeviceLed(device: Device, status: PowerStatus): void {
+export function ledState(p: PowerDevice): LedState {
   // PDU: 공급 중 초록, 차단 빨강
-  const color = device.power.role === 'pdu' ? LED_COLOR[status === 'running' ? 'running' : 'nolink'] : LED_COLOR[status];
-  if (device.led) (device.led.material as THREE.MeshBasicMaterial).color.setHex(color);
+  if (p.role === 'pdu') return p.tripped ? 'fault' : 'running';
+  if (!p.on) return p.ready ? 'ready' : 'dark';
+  const byStatus: Record<PowerStatus, LedState> = { off: 'dark', nopower: 'fault', booting: 'booting', nolink: 'fault', running: 'running' };
+  return byStatus[p.status];
+}
+
+/** 가동 판정 뒤 앞·뒷면 상태등 */
+export function setDeviceLed(device: Device): void {
+  const color = LED_COLOR[ledState(device.power)];
+  for (const led of [device.led, device.backLed]) if (led) (led.material as THREE.MeshBasicMaterial).color.setHex(color);
 }
 
 /** 옆면 바깥 세로 PDU. 자리는 왼쪽(0)·오른쪽(1) 두 곳 */
@@ -179,5 +198,5 @@ export function createPdu(id: string, side: number): { device: Device; sockets: 
     ports.push(port);
   }
   const power = powerOf(id, DEVICES.pdu, 'pdu', ports);
-  return { device: { id, def: DEVICES.pdu, u: null, side, on: true, ports, group: g, body, button: null, led, power }, sockets };
+  return { device: { id, def: DEVICES.pdu, u: null, side, on: true, ports, group: g, body, button: null, led, backLed: null, power }, sockets };
 }

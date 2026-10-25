@@ -33,6 +33,21 @@ export function createCameraRig(camera: THREE.PerspectiveCamera, dom: HTMLElemen
   controls.maxDistance = 7;
   controls.maxPolarAngle = Math.PI * 0.495; // 바닥 아래로 못 내려감
   controls.screenSpacePanning = true;
+  // 회전은 가운데 버튼, 팬은 오른쪽 버튼 또는 Shift+왼쪽. 왼쪽 드래그 회전은 없음 (10-25 플레이 피드백)
+  controls.mouseButtons = { LEFT: null, MIDDLE: THREE.MOUSE.ROTATE, RIGHT: THREE.MOUSE.PAN };
+  // OrbitControls는 "ROTATE 버튼 + Shift"를 팬으로 바꿔 주므로, Shift를 누른 왼쪽만 ROTATE로 넘긴다.
+  // 장비 들기·케이블 잡기 캡처 리스너보다 먼저 등록돼 버튼 표만 바꾸고 이벤트는 그대로 흘려보냄
+  window.addEventListener(
+    'pointerdown',
+    (e) => {
+      if (e.target === dom && e.button === 0) controls.mouseButtons.LEFT = e.shiftKey ? THREE.MOUSE.ROTATE : null;
+    },
+    { capture: true },
+  );
+  // 가운데 버튼 자동 스크롤(Windows 브라우저) 막기
+  dom.addEventListener('mousedown', (e) => {
+    if (e.button === 1) e.preventDefault();
+  });
   controls.update();
 
   let tween: { fromPos: THREE.Vector3; toPos: THREE.Vector3; fromTarget: THREE.Vector3; t: number } | null = null;

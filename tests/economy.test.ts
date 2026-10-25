@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { CABLES, DEVICES, type DeviceDefId } from '../src/data/catalog';
+import { CABLES, DEVICES, START_MONEY, type DeviceDefId } from '../src/data/catalog';
 import { paybackSec, priceOf, spend, tick } from '../src/game/economy';
 import { createGameState } from '../src/game/state';
 import { PDU_LAYOUT, PDU_SIDES } from '../src/rack/device';
@@ -26,7 +26,7 @@ describe('인플레이션 억제', () => {
   function simulate(minutes: number) {
     const cable = CABLES['cable-lan'].price + CABLES['cable-power'].price;
     const bought: Record<string, number> = {};
-    let money = 0;
+    let money = START_MONEY;
     let income = 1; // 시작 엔트리 서버
     const cost = (id: DeviceDefId) => priceOf(DEVICES[id], bought[id] ?? 0) + cable;
     for (let t = 0; t < minutes * 60; t++) {
@@ -63,7 +63,7 @@ describe('제약 포함 15분 (M6)', () => {
     const price = (id: DeviceDefId) => priceOf(DEVICES[id], bought[id] ?? 0);
     const cost = (id: DeviceDefId) => price(id) + (id === 'pdu' ? 0 : id === 'switch-24' ? PWR : LAN + PWR);
     // 시작 상태: PDU 1 (콘센트 2 사용) · 스위치 8포트 (랜 1 사용) · 엔트리 서버
-    let money = 0, income = 1, lanFree = lanPorts('switch-8') - 1, outlets = PDU_LAYOUT.outlets - 2;
+    let money = START_MONEY, income = 1, lanFree = lanPorts('switch-8') - 1, outlets = PDU_LAYOUT.outlets - 2;
     let pdus = 1, watts = DEVICES['switch-8'].watts + DEVICES['server-entry'].watts;
     const webAt: number[] = [];
     for (let t = 0; t < minutes * 60; t++) {
@@ -95,13 +95,13 @@ describe('제약 포함 15분 (M6)', () => {
   const cheapest = (cost: (id: DeviceDefId) => number) =>
     (['server-entry', 'server-web'] as const).reduce((a, b) => (cost(a) / DEVICES[a].incomePerSec <= cost(b) / DEVICES[b].incomePerSec ? a : b));
 
-  it('웹 서버만 사면 3대째가 12분 안 (실측 10.8분)', () => {
-    expect(simulate(15, () => 'server-web').webAt[2]).toBeLessThan(12 * 60);
+  it('웹 서버만 사면 3대째가 7분 안 (시작 300원 실측 5.8분)', () => {
+    expect(simulate(15, () => 'server-web').webAt[2]).toBeLessThan(7 * 60);
   });
 
-  it('회수 시간 탐욕이어도 15분 안에 웹 서버 3대 (실측 14.4분 — PDU·스위치 벽을 넘어서)', () => {
+  it('회수 시간 탐욕이어도 13분 안에 웹 서버 3대 (시작 300원 실측 11.6분 — PDU·스위치 벽을 넘어서)', () => {
     const { webAt, bought } = simulate(15, cheapest);
-    expect(webAt[2]).toBeLessThan(15 * 60);
+    expect(webAt[2]).toBeLessThan(13 * 60);
     expect(bought.pdu).toBe(1);
   });
 });

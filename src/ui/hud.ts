@@ -1,4 +1,5 @@
 import { events, type ViewMode } from '../core/events';
+import { LED_COLOR, type LedState } from '../rack/device';
 import { formatMoney, formatRate } from './format';
 
 // HUD 루트는 pointer-events: none — 빈 곳 입력은 그대로 3D 캔버스로 통과한다.
@@ -23,16 +24,53 @@ export interface Hud {
   setDebug(text: string): void;
 }
 
-/** 새 게임 버튼 → 확인 뒤 onNewGame */
-export function createHud(root: HTMLElement, onNewGame: () => void): Hud {
+const LED_HELP: [LedState, string][] = [
+  ['running', '가동 중'],
+  ['booting', '부팅 중'],
+  ['ready', '배선 완료 · 켜면 가동'],
+  ['fault', '켰는데 안 돎 · 전원선·랜선 확인'],
+  ['dark', '꺼짐 · 배선 덜 됨'],
+];
+const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
+
+/** 규칙 요약 (상단 바 가이드 버튼으로 열고 닫음) */
+const GUIDE_HTML = `
+  <div class="head"><b>가이드</b><button class="x" data-act="close-guide" aria-label="닫기">×</button></div>
+  <p>서버를 사서 랙에 끼우고 선을 꽂아 <b>초당 수익</b>을 늘리세요. 게임을 켜 둔 동안에만 돈이 쌓여요.</p>
+  <h3>설치 순서</h3>
+  <ol>
+    <li>상점에서 장비를 고르고 랙의 빈 칸을 클릭</li>
+    <li>상점에서 전원선·랜선 구매 (랙 뒤 바닥에 놓임)</li>
+    <li>뒷면에서 케이블 끝을 끌어 포트에 꽂기: 전원선 → 옆면 PDU 콘센트, 랜선 → 스위치</li>
+    <li>앞면 전원 버튼 → 3초 부팅 → 수익 시작</li>
+  </ol>
+  <h3>상태등 (앞면·뒷면)</h3>
+  <ul class="leds">${LED_HELP.map(([k, t]) => `<li><i style="background:${hex(LED_COLOR[k])}"></i>${t}</li>`).join('')}</ul>
+  <h3>제약</h3>
+  <ul>
+    <li>스위치 랜 포트가 다 차면 스위치 24포트</li>
+    <li>PDU는 콘센트 8개·3,000W. 넘으면 차단기가 내려가니 PDU를 추가해 나눠 꽂기</li>
+  </ul>
+  <h3>조작</h3>
+  <ul>
+    <li>가운데 버튼 드래그: 회전 · 오른쪽 또는 Shift+왼쪽 드래그: 이동 · 휠: 확대</li>
+    <li>케이블 끄는 중 휠: 앞뒤로 밀기</li>
+    <li>장비 클릭: 정보 카드 (켜기·끄기·빼기) · Esc: 취소</li>
+  </ul>
+`;
+
+/** 새 게임 버튼 → 확인 뒤 onNewGame. guideOpen: 처음 시작이면 가이드를 펼친 채로 */
+export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = false): Hud {
   root.innerHTML = `
     <header class="hud-panel hud-top">
       <span class="stat money" data-k="money"></span>
       <span class="stat rate" data-k="rate"></span>
       <span class="stat power" data-k="power"></span>
       <span class="stat warn" data-k="warn" hidden></span>
+      <button class="guide-toggle" type="button" aria-expanded="false">가이드</button>
       <button class="new-game" type="button" title="저장을 지우고 처음부터">새 게임</button>
     </header>
+    <section class="hud-panel hud-guide" hidden>${GUIDE_HTML}</section>
     <aside class="hud-panel hud-shop"></aside>
     <div class="hud-hint" hidden></div>
     <nav class="hud-panel hud-toolbar">
@@ -56,6 +94,16 @@ export function createHud(root: HTMLElement, onNewGame: () => void): Hud {
   root.querySelector('.new-game')!.addEventListener('click', () => {
     if (window.confirm('저장을 지우고 처음부터 시작할까요? 되돌릴 수 없어요.')) onNewGame();
   });
+  const guide = root.querySelector<HTMLElement>('.hud-guide')!;
+  const guideToggle = root.querySelector<HTMLButtonElement>('.guide-toggle')!;
+  const setGuide = (open: boolean) => {
+    guide.hidden = !open;
+    guideToggle.classList.toggle('on', open);
+    guideToggle.setAttribute('aria-expanded', String(open));
+  };
+  guideToggle.addEventListener('click', () => setGuide(guide.hidden));
+  guide.querySelector('[data-act="close-guide"]')!.addEventListener('click', () => setGuide(false));
+  setGuide(guideOpen);
   const debug = root.querySelector<HTMLElement>('.hud-debug')!;
   const hint = root.querySelector<HTMLElement>('.hud-hint')!;
 

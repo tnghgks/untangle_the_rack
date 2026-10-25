@@ -37,6 +37,9 @@ export interface CableDef {
   price: number;
 }
 
+/** 새 게임 시작 돈: 엔트리 서버 + 케이블 몇 세트를 바로 살 수 있게 (초반에 할 일이 없던 문제, 10-25 플레이 피드백) */
+export const START_MONEY = 300;
+
 const POWER_X = 0.19;
 const serverPorts = (lan: number): PortDef[] => [
   ...Array.from({ length: lan }, (_, i) => ({ kind: 'lan' as const, x: -0.12 + i * 0.03 })),
