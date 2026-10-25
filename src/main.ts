@@ -10,6 +10,7 @@ import { CABLES, DEVICES, type DeviceDefId } from './data/catalog';
 import { events } from './core/events';
 import { createHud } from './ui/hud';
 import { createShop } from './ui/shop';
+import { priceOf } from './game/economy';
 
 const canvas = document.querySelector<HTMLCanvasElement>('#stage')!;
 const hudRoot = document.querySelector<HTMLElement>('#hud')!;
@@ -48,11 +49,33 @@ events.on('placement:held', (id) => {
 });
 events.on('device:installed', () => flashHint('설치 완료 · 뒷면에서 전원선·랜선을 연결하고 앞면 전원 버튼을 누르세요'));
 
-// M3 전까지: 잠김은 catalog 해금 조건만 보고, 돈은 빠지지 않음. PDU 옆면 설치는 M4
-createShop(hud.shopPanel, {
-  isUnlocked: (def) => def.unlock === null && def.sizeU > 0,
-  priceOf: (id) => DEVICES[id].price,
-  onBuyDevice: (id) => (placement.held === id ? placement.cancel() : placement.hold(id)),
+// 구매 횟수 → 다음 가격. 시작 지급 장비는 이 구독 전에 설치돼 세지 않는다. M3에서 GameState로 옮김
+const bought: Partial<Record<DeviceDefId, number>> = {};
+const countBuy = (id: DeviceDefId) => (bought[id] = (bought[id] ?? 0) + 1);
+events.on('device:installed', ({ deviceId }) => {
+  const d = room.device(deviceId);
+  if (d) countBuy(d.def.id);
+});
+
+// 해금 없음: 막히는 건 자리 부족뿐. M3 전까지 돈은 빠지지 않음
+const shop = createShop(hud.shopPanel, {
+  blockedReason: (def) =>
+    def.sizeU === 0
+      ? room.freePduSide() === null ? '옆면 자리 없음' : null
+      : room.slots.firstFree(def.sizeU) === null ? `빈 ${def.sizeU}U 자리 없음` : null,
+  priceOf: (id) => priceOf(DEVICES[id], bought[id] ?? 0),
+  onBuyDevice: (id) => {
+    if (id === 'pdu') {
+      // 옆면은 고를 자리가 없어 바로 붙임
+      if (!room.addPdu()) return;
+      countBuy(id);
+      shop.refresh();
+      flashHint('PDU를 랙 옆면에 달았어요 · 뒷면에서 콘센트에 전원선을 꽂으세요');
+      return;
+    }
+    if (placement.held === id) placement.cancel();
+    else placement.hold(id);
+  },
   onBuyCable: (id) => {
     room.spawnCable(CABLES[id].kind);
     flashHint(`${CABLES[id].name}이 랙 뒤 바닥에 놓였어요`);

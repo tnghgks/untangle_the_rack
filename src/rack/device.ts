@@ -114,18 +114,20 @@ export function setDevicePower(device: Device, on: boolean): void {
   if (device.button) device.button.position.z = DEVICE_DEPTH / 2 + (on ? 0.001 : 0.002);
 }
 
-/** 옆면(왼쪽 바깥) 세로 PDU */
-export const PDU_LAYOUT = { x: -RACK.width / 2 - 0.04, z: -0.43, w: 0.05, d: 0.04, y0: 0.15, y1: 1.45, outlets: 8 };
+/** 옆면 바깥 세로 PDU. 자리는 왼쪽(0)·오른쪽(1) 두 곳 */
+export const PDU_SIDES = 2;
+export const PDU_LAYOUT = { x: RACK.width / 2 + 0.04, z: -0.43, w: 0.05, d: 0.04, y0: 0.15, y1: 1.45, outlets: 8 };
 
-export function createPdu(id: string): { device: Device; sockets: Socket[] } {
+export function createPdu(id: string, side: number): { device: Device; sockets: Socket[] } {
   const L = PDU_LAYOUT;
+  const x = side === 0 ? -L.x : L.x;
   const g = new THREE.Group();
   g.name = id;
   const body = new THREE.Mesh(
     new THREE.BoxGeometry(L.w, L.y1 - L.y0, L.d),
     new THREE.MeshStandardMaterial({ color: DEVICES.pdu.color, metalness: 0.4, roughness: 0.6 }),
   );
-  body.position.set(L.x, (L.y0 + L.y1) / 2, L.z);
+  body.position.set(x, (L.y0 + L.y1) / 2, L.z);
   body.castShadow = true;
   body.userData.solid = true;
   g.add(body);
@@ -135,7 +137,7 @@ export function createPdu(id: string): { device: Device; sockets: Socket[] } {
   const ports: Port[] = [];
   for (let i = 0; i < L.outlets; i++) {
     const y = L.y0 + 0.1 + (i * (L.y1 - L.y0 - 0.2)) / (L.outlets - 1);
-    const pos: Vec3 = [L.x, y, outletZ];
+    const pos: Vec3 = [x, y, outletZ];
     const port: Port = { id: `${id}:power${i}`, kind: 'power', pos, dir: OUT, plugged: null };
     const mesh = createSocketMesh('power', pos);
     g.add(mesh);

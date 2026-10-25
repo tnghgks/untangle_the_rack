@@ -7,7 +7,7 @@ import { events } from '../core/events';
 import { createRng } from '../core/rng';
 import type { DeviceDefId } from '../data/catalog';
 import { CABLE_DEFAULT_LENGTH, RACK_HEIGHT } from '../data/units';
-import { createPdu, createRackDevice, setDevicePower, type Device, type Socket } from '../rack/device';
+import { createPdu, createRackDevice, PDU_SIDES, setDevicePower, type Device, type Socket } from '../rack/device';
 import { RackSlots } from '../rack/rack';
 import { collectColliders } from './scene';
 
@@ -55,8 +55,17 @@ export class Room {
     return device;
   }
 
-  addPdu(): Device {
-    const { device, sockets } = createPdu(`pdu#${++this.serial}`);
+  /** 비어 있는 옆면 자리 (없으면 null) */
+  freePduSide(): number | null {
+    const used = this.devices.filter((d) => d.def.id === 'pdu').length;
+    return used < PDU_SIDES ? used : null;
+  }
+
+  /** 빈 옆면에 PDU를 붙임 (자리 없으면 null) */
+  addPdu(): Device | null {
+    const side = this.freePduSide();
+    if (side === null) return null;
+    const { device, sockets } = createPdu(`pdu#${++this.serial}`, side);
     this.scene.add(device.group);
     this.addDevice(device, sockets);
     return device;
@@ -165,7 +174,7 @@ function emissive(s: Socket): THREE.Color {
 /** 계획서 4.4 시작 상태: 옆면 PDU, U1 스위치 8포트, U3 엔트리 서버. 전원선 2·랜선 1이 꽂혀 켜진 채 */
 export function createStartRoom(scene: THREE.Scene, rack: THREE.Group): Room {
   const room = new Room(scene, rack);
-  const pdu = room.addPdu();
+  const pdu = room.addPdu()!;
   const sw = room.install('switch-8', 1)!;
   const entry = room.install('server-entry', 3)!;
   const port = (d: Device, kind: PortKind, nth = 0) => d.ports.filter((p) => p.kind === kind)[nth];
