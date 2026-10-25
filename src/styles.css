@@ -55,6 +55,8 @@ html, body {
 .hud-top .money { font-weight: 700; font-size: 1.15rem; }
 .hud-top .rate { color: var(--accent); align-self: center; }
 .hud-top .power { color: var(--muted); align-self: center; }
+.hud-top .air { color: var(--muted); align-self: center; }
+.hud-top .air.bad { color: #ff8a5c; }
 .hud-top .warn { color: #ffc23c; align-self: center; font-weight: 600; }
 .hud-top .warn[hidden] { display: none; }
 .hud-top .new-game, .hud-top .guide-toggle {

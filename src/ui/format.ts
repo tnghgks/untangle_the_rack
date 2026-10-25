@@ -39,5 +39,7 @@ function formatSig(n: number): string {
 }
 
 export function formatRate(perSec: number): string {
+  // 스로틀링으로 소수가 생김: 10원 미만은 소수 첫째 자리까지 내림 (0.73 → +0.7원/초)
+  if (perSec < 10 && !Number.isInteger(perSec)) return `+${(Math.floor(perSec * 10) / 10).toFixed(1)}원/초`;
   return `+${formatMoney(perSec)}/초`;
 }

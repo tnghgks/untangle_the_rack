@@ -9,7 +9,8 @@ import type { DeviceDefId } from '../data/catalog';
 import { CABLE_DEFAULT_LENGTH, RACK_HEIGHT } from '../data/units';
 import { BOOT_MS, resetBreaker, updatePower, type PowerSummary } from '../game/power';
 import { round3, type SaveData, type SavedCable, type SavedDevice } from '../game/save';
-import { createPdu, createRackDevice, PDU_SIDES, setDeviceLed, setDevicePower, type Device, type Socket } from '../rack/device';
+import { airflowOf, blockedLength, incomeFactor } from '../game/thermal';
+import { createPdu, createRackDevice, EXHAUST_ZONE, PDU_SIDES, setDeviceLed, setDevicePower, type Device, type Socket } from '../rack/device';
 import { RackSlots } from '../rack/rack';
 import { collectColliders } from './scene';
 
@@ -43,6 +44,13 @@ export class Room {
   private readonly rng = createRng(42);
   /** 마지막 가동 판정 결과 */
   summary: PowerSummary = { incomePerSec: 0, powerUsed: 0, powerCap: 0 };
+  /** 마지막 판정의 공기 흐름 0~1 (thermal.ts) */
+  airflow = 1;
+
+  /** 스로틀링을 뺀 실제 초당 수익 */
+  get incomePerSec(): number {
+    return this.summary.incomePerSec * incomeFactor(this.airflow);
+  }
 
   constructor(
     private readonly scene: THREE.Scene,
@@ -127,8 +135,9 @@ export class Room {
     events.emit('device:power', { deviceId: device.id, on });
   }
 
-  /** 가동 판정 + LED. 매 틱과 배선·전원 이벤트마다 */
+  /** 가동 판정 + LED + 공기 흐름. 매 틱과 배선·전원 이벤트마다 */
   updatePower(now: number): PowerSummary {
+    this.airflow = airflowOf(blockedLength(this.world.cables, EXHAUST_ZONE));
     const links = new Map<string, string>();
     for (const c of this.world.cables) {
       const [a, b] = c.ends;

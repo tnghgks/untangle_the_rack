@@ -172,7 +172,7 @@ if (stress > 0) {
 // 수익: 밀린 시간을 먼저 직전 수익으로 더하고(부팅이 숨긴 탭에서 끝나도 그 시간은 안 셈) 가동 판정을 갱신
 const advance = () => {
   const now = Date.now();
-  tick(state, now, room.summary.incomePerSec);
+  tick(state, now, room.incomePerSec);
   room.updatePower(now);
 };
 // 배선·전원·설치가 바뀌면 바로 LED·수익에 반영
@@ -230,7 +230,7 @@ startLoop({
     placement.refresh();
     lastRealMs = now;
     advance();
-    hud.setModel({ money: state.money, ...room.summary, pduWarn: pduWarn() });
+    hud.setModel({ money: state.money, ...room.summary, incomePerSec: room.incomePerSec, airflow: room.airflow, pduWarn: pduWarn() });
     inspector.update();
     room.sync(performance.now() / 1000);
     stage.renderer.render(stage.scene, stage.camera);

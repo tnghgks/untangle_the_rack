@@ -1,4 +1,5 @@
 import { events, type ToolId, type ViewMode } from '../core/events';
+import { incomeFactor } from '../game/thermal';
 import { LED_COLOR, type LedState } from '../rack/device';
 import { formatMoney, formatRate } from './format';
 
@@ -10,6 +11,8 @@ export interface HudModel {
   incomePerSec: number;
   powerUsed: number;
   powerCap: number;
+  /** 공기 흐름 0~1 (thermal.ts). incomePerSec은 이미 스로틀링을 뺀 값 */
+  airflow: number;
   /** 가장 위험한 PDU 경고 (차단·과부하 직전). null = 괜찮음 */
   pduWarn: string | null;
 }
@@ -51,6 +54,7 @@ const GUIDE_HTML = `
   <ul>
     <li>스위치 랜 포트가 다 차면 스위치 24포트</li>
     <li>PDU는 콘센트 8개·3,000W. 넘으면 차단기가 내려가니 PDU를 추가해 나눠 꽂기</li>
+    <li>랙 뒤로 늘어진 케이블은 배기를 막아 🌀 공기 흐름이 떨어지고 수익이 최대 50% 줄어요. ✂ 줄이기로 남는 길이를 걷어 뒷면에 붙이기</li>
   </ul>
   <h3>조작</h3>
   <ul>
@@ -68,6 +72,7 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
       <span class="stat money" data-k="money"></span>
       <span class="stat rate" data-k="rate"></span>
       <span class="stat power" data-k="power"></span>
+      <span class="stat air" data-k="air"></span>
       <span class="stat warn" data-k="warn" hidden></span>
       <button class="guide-toggle" type="button" aria-expanded="false">가이드</button>
       <button class="new-game" type="button" title="저장을 지우고 처음부터">새 게임</button>
@@ -93,6 +98,7 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
   const money = field('money');
   const rate = field('rate');
   const power = field('power');
+  const air = field('air');
   const warn = field('warn');
   root.querySelector('.new-game')!.addEventListener('click', () => {
     if (window.confirm('저장을 지우고 처음부터 시작할까요? 되돌릴 수 없어요.')) onNewGame();
@@ -137,6 +143,9 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
       money.textContent = `💰 ${formatMoney(m.money)}`;
       rate.textContent = formatRate(m.incomePerSec);
       power.textContent = `⚡ ${m.powerUsed.toLocaleString('ko-KR')} / ${m.powerCap.toLocaleString('ko-KR')}W`;
+      const cut = Math.round((1 - incomeFactor(m.airflow)) * 100);
+      air.textContent = `🌀 공기 흐름 ${Math.round(m.airflow * 100)}%` + (cut > 0 ? ` · 수익 −${cut}%` : '');
+      air.classList.toggle('bad', cut > 0);
       warn.hidden = m.pduWarn === null;
       warn.textContent = m.pduWarn ?? '';
     },

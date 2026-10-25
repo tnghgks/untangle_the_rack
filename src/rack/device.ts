@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import type { Port, PortKind } from '../cable/cable';
-import type { Vec3 } from '../cable/collide';
+import type { Aabb, Vec3 } from '../cable/collide';
 import { DEVICES, type DeviceDef, type DeviceDefId } from '../data/catalog';
-import { RACK, U, uBottomY } from '../data/units';
+import { RACK, RACK_HEIGHT, U, uBottomY } from '../data/units';
 import type { PowerDevice, PowerStatus } from '../game/power';
 
 // 장비 엔티티와 메시. 앞면: 전원 버튼·LED, 뒷면: 포트 소켓.
@@ -13,6 +13,15 @@ export const DEVICE_DEPTH = RACK.depth - 0.16;
 export const DEVICE_WIDTH = RACK.railWidth - 0.01;
 export const BACK_Z = -DEVICE_DEPTH / 2 - 0.002;
 const OUT: Vec3 = [0, 0, -1];
+
+/** 뒷면에 붙어 지나가는 층 두께 — 이 안의 선은 배기를 막지 않는 것으로 본다 (thermal.ts) */
+export const EXHAUST_GAP = 0.1;
+export const EXHAUST_DEPTH = 0.6;
+/** 배기 통로: 랙 폭 × 바닥~꼭대기, 뒷면에서 EXHAUST_GAP 떨어진 곳부터 EXHAUST_DEPTH만큼 뒤로 */
+export const EXHAUST_ZONE: Aabb = {
+  min: [-RACK.width / 2, 0, BACK_Z - EXHAUST_GAP - EXHAUST_DEPTH],
+  max: [RACK.width / 2, RACK_HEIGHT, BACK_Z - EXHAUST_GAP],
+};
 
 const SOCKET: Record<PortKind, THREE.Vector3> = {
   lan: new THREE.Vector3(0.014, 0.012, 0.006),
