@@ -3,6 +3,7 @@ import { createCable, CableWorld, type Cable, type Port, type PortKind } from '.
 import { CableMesh } from '../cable/cableMesh';
 import type { Aabb, Vec3 } from '../cable/collide';
 import { plug, unplug, type PortHit } from '../cable/plug';
+import { restoreTie } from '../cable/velcro';
 import { events } from '../core/events';
 import { createRng } from '../core/rng';
 import type { DeviceDefId } from '../data/catalog';
@@ -216,7 +217,7 @@ export class Room {
         id: c.id, kind: c.kind, color: c.color,
         ends: [c.ends[0]?.id ?? null, c.ends[1]?.id ?? null],
         nodes: Array.from(c.rope.pos, round3),
-        length: round3(c.rope.length),
+        ...(c.ties.length ? { ties: c.ties.map((t) => ({ node: t.node, pos: t.pos.map(round3) as [number, number, number] })) } : {}),
       }));
     return { serial: this.serial, spawned: this.spawned, devices, cables };
   }
@@ -233,8 +234,6 @@ export class Room {
     for (const saved of data.cables) {
       const c = this.addCable(saved.kind, saved);
       const { rope } = c;
-      // 꽂기(plug)가 끝 옆 마디를 간격만큼 띄우므로 길이를 먼저
-      if (saved.length !== undefined) rope.setLength(saved.length);
       if (saved.nodes.length === rope.pos.length) {
         rope.pos.set(saved.nodes);
         rope.prev.set(saved.nodes);
@@ -249,6 +248,7 @@ export class Room {
         const port = id === null ? undefined : portById.get(id);
         if (port) plug(c, end as 0 | 1, port);
       });
+      for (const t of saved.ties ?? []) restoreTie(c, t);
     }
     this.serial = Math.max(this.serial, data.serial);
     this.spawned = data.spawned;

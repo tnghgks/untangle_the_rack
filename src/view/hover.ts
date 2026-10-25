@@ -5,11 +5,11 @@ import type { Room } from './room';
 
 // 클릭할 수 있는 것 위에 커서를 올리면 은은하게 밝히고 커서를 바꾼다 (10-25 플레이 피드백).
 // 고르는 순서는 클릭 우선순위와 같음: 전원 버튼 → 케이블 → 장비 몸체(정보 카드).
-// 전원 버튼·장비는 pointer, 케이블은 grab (줄이기 도구면 ns-resize). 장비를 든 동안·드래그 중에는 강조를 끄고 커서는 그쪽에 맡긴다.
+// 전원 버튼·장비는 pointer, 케이블은 grab (벨크로 도구면 copy). 장비를 든 동안·드래그 중에는 강조를 끄고 커서는 그쪽에 맡긴다.
 
 const GLOW: Record<Kind, number> = { button: 0x2c6640, cable: 0x3a3f48, device: 0x22344a };
 const CURSOR: Record<Kind, string> = { button: 'pointer', cable: 'grab', device: 'pointer' };
-const CABLE_CURSOR: Record<ToolId, string> = { hand: 'grab', shorten: 'ns-resize' };
+const CABLE_CURSOR: Record<ToolId, string> = { hand: 'grab', velcro: 'copy' };
 
 type Kind = 'button' | 'cable' | 'device';
 

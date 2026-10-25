@@ -27,8 +27,8 @@ export interface SavedCable {
   ends: [string | null, string | null];
   /** 마디 좌표 xyz 이어 붙임, 소수 3자리 (mm) */
   nodes: number[];
-  /** 줄이기 도구로 바꾼 길이 (m). 없으면 기본 길이 (P4 이전 저장) */
-  length?: number;
+  /** 벨크로: 묶은 마디와 고정 자리. 없으면 안 묶음 (P4 이전 저장) */
+  ties?: { node: number; pos: [number, number, number] }[];
 }
 
 export interface SaveData {
@@ -60,6 +60,10 @@ export function parseSave(text: string | null): SaveData | null {
 
 const num = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
 const portId = (x: unknown) => x === null || typeof x === 'string';
+const tieOk = (t: unknown) => {
+  const r = t as { node?: unknown; pos?: unknown };
+  return typeof t === 'object' && t !== null && Number.isInteger(r.node) && Array.isArray(r.pos) && r.pos.length === 3 && r.pos.every(num);
+};
 
 function isSave(d: unknown): d is SaveData {
   if (typeof d !== 'object' || d === null) return false;
@@ -74,7 +78,7 @@ function isSave(d: unknown): d is SaveData {
     typeof x?.id === 'string' && (x.kind === 'lan' || x.kind === 'power') && num(x.color) &&
     Array.isArray(x.ends) && x.ends.length === 2 && x.ends.every(portId) &&
     Array.isArray(x.nodes) && x.nodes.length % 3 === 0 && x.nodes.every(num) &&
-    (x.length === undefined || (num(x.length) && x.length > 0)));
+    (x.ties === undefined || (Array.isArray(x.ties) && x.ties.every(tieOk))));
   return devOk && cabOk;
 }
 

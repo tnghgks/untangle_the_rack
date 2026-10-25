@@ -3,10 +3,11 @@ import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js
 import { endNode, type Cable, type CableEnd, type CableWorld } from '../cable/cable';
 import type { Vec3 } from '../cable/collide';
 import { MAGNET_RADIUS, SNAP_RADIUS, magnetize, nearestPortOnRay, plug, unplug, type PortHit } from '../cable/plug';
+import { tieAt, untie } from '../cable/velcro';
 import { pickCable } from './pick';
 
 // 케이블 잡기·끌기. 잡은 점은 카메라를 바라보는 평면 위에서 움직이고, 휠로 그 평면을 앞뒤로 민다.
-// 꽂힌 커넥터를 잡으면 뽑힌다 (클릭 = 뽑기). 반대쪽 끝이 꽂힌 채로 너무 당기면 그쪽이 빠진다.
+// 꽂힌 커넥터를 잡으면 뽑힌다 (클릭 = 뽑기). 반대쪽 끝이 꽂힌 채로 너무 당기면 그쪽이 빠진다. 벨크로에 걸려 있으면 벨크로가 먼저 떨어진다.
 
 const WHEEL_STEP = 0.02;
 const PULL_OUT = 0.15;
@@ -16,7 +17,7 @@ export interface CableDragDeps {
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
   world: CableWorld;
-  /** 손 도구일 때만 잡는다 (줄이기 도구는 shorten.ts) */
+  /** 손 도구일 때만 잡는다 (벨크로 도구는 velcro.ts) */
   enabled(): boolean;
   /** 끄는 커넥터 근처의 포트 표시 (null = 끔) */
   showPortHint(hit: PortHit | null): void;
@@ -70,7 +71,9 @@ export function createCableDrag({ canvas, camera, controls, world, enabled, show
     }
     const { overshoot, anchor } = cable.rope.clampToReach(target);
     if (overshoot > PULL_OUT) {
-      unplug(cable, anchor <= 1 ? 0 : 1);
+      const t = tieAt(cable, anchor);
+      if (t) untie(cable, t);
+      else unplug(cable, anchor <= 1 ? 0 : 1);
     }
     cable.rope.setGrabTarget(target[0], target[1], target[2]);
   };

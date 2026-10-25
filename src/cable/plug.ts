@@ -26,18 +26,6 @@ export function plug(cable: Cable, end: CableEnd, port: Port): boolean {
   return true;
 }
 
-/** 길이(마디 간격)가 바뀐 뒤: 꽂힌 끝 옆 마디를 새 간격만큼 앞으로 다시 고정 (줄이기 도구) */
-export function refreshPlugs(cable: Cable): void {
-  const { rope } = cable;
-  const s = rope.cfg.segLen;
-  cable.ends.forEach((port, end) => {
-    if (!port) return;
-    const [px, py, pz] = port.pos;
-    const [dx, dy, dz] = port.dir;
-    rope.pin(end === 0 ? 1 : rope.n - 2, px + dx * s, py + dy * s, pz + dz * s);
-  });
-}
-
 export function unplug(cable: Cable, end: CableEnd): void {
   const port = cable.ends[end];
   if (!port) return;

@@ -2,8 +2,6 @@ import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { createCable } from '../src/cable/cable';
 import type { Aabb } from '../src/cable/collide';
-import { CableResize, MIN_CABLE_LENGTH } from '../src/cable/shorten';
-import { STEP_SEC } from '../src/core/loop';
 import { airflowOf, blockedLength, FULL_BLOCK, incomeFactor, lengthInBox, MAX_THROTTLE } from '../src/game/thermal';
 import { formatRate } from '../src/ui/format';
 import { createStartRoom } from '../src/view/room';
@@ -26,24 +24,11 @@ describe('공기 흐름', () => {
     expect(incomeFactor(airflowOf(FULL_BLOCK / 2))).toBeCloseTo(1 - MAX_THROTTLE / 2);
   });
 
-  it('시작 상태(2m 케이블 3개)는 감점되고, 줄이기로 남는 길이를 걷으면 회복', () => {
+  it('시작 상태(2m 케이블 3개)는 감점 (회복은 velcro.test.ts)', () => {
     const room = createStartRoom(new THREE.Scene(), new THREE.Group());
     room.updatePower(Date.now());
     expect(room.airflow).toBeLessThan(0.8);
     expect(room.incomePerSec).toBeLessThan(0.9);
-
-    for (const c of room.world.cables) {
-      const job = new CableResize(c.rope);
-      for (let i = 0; i < 600; i++) {
-        job.step(MIN_CABLE_LENGTH, STEP_SEC);
-        room.world.step(STEP_SEC);
-      }
-      job.end();
-    }
-    for (let i = 0; i < 300; i++) room.world.step(STEP_SEC);
-    room.updatePower(Date.now());
-    expect(room.airflow).toBeGreaterThan(0.95);
-    expect(room.incomePerSec).toBeGreaterThan(0.97);
   });
 
   it('스로틀링으로 생긴 소수 수익 표기', () => {

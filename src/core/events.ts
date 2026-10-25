@@ -1,7 +1,7 @@
 // 타입 있는 이벤트 버스. 이벤트 이름과 페이로드는 GameEvents 한 곳에서 정의한다.
 
 export type ViewMode = 'front' | 'back' | 'free';
-export type ToolId = 'hand' | 'shorten';
+export type ToolId = 'hand' | 'velcro';
 
 export interface GameEvents {
   'view:set': ViewMode;
@@ -10,6 +10,9 @@ export interface GameEvents {
   'tool:set': ToolId;
   'cable:plugged': { cableId: string; portId: string };
   'cable:unplugged': { cableId: string; portId: string };
+  /** 벨크로를 묶음 / 풂 (손으로 세게 당겨 떨어진 것 포함) */
+  'cable:tied': { cableId: string; node: number };
+  'cable:untied': { cableId: string; node: number };
   'device:installed': { deviceId: string };
   /** 랙에서 뺌 (손에 들림 — 다시 끼우면 같은 id로 device:installed) */
   'device:removed': { deviceId: string };

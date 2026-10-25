@@ -3,7 +3,7 @@ import { startLoop } from './core/loop';
 import { createStage } from './view/scene';
 import { createCameraRig } from './view/camera';
 import { createCableDrag } from './view/drag';
-import { createShortenTool } from './view/shorten';
+import { createVelcroTool } from './view/velcro';
 import { createStartRoom, restoreRoom } from './view/room';
 import { createPowerButtons } from './view/powerButton';
 import { createHover } from './view/hover';
@@ -56,7 +56,7 @@ const buy = (id: DeviceDefId): boolean => {
   return true;
 };
 
-// 입력 우선순위는 등록 순서: 장비 들기 → 전원 버튼 → 케이블 드래그(손)·줄이기 → 장비 정보 카드 → OrbitControls
+// 입력 우선순위는 등록 순서: 장비 들기 → 전원 버튼 → 케이블 드래그(손)·벨크로 → 장비 정보 카드 → OrbitControls
 const placement = createPlacement({
   canvas,
   camera: stage.camera,
@@ -86,7 +86,7 @@ createPowerButtons(canvas, stage.camera, rig.controls, room);
 let tool: ToolId = 'hand';
 events.on('tool:set', (t) => {
   tool = t;
-  if (t === 'shorten') flashHint('✂ 줄이기: 케이블을 누른 채 위로 끌면 줄고 아래로 끌면 늘어나요 · 1 손으로 돌아가기');
+  if (t === 'velcro') flashHint('🔗 벨크로: 케이블을 클릭하면 뒷면 기둥에 묶어 올려요 · 묶인 곳을 다시 클릭하면 풀기 · 1 손으로 돌아가기');
 });
 createCableDrag({
   canvas,
@@ -96,16 +96,13 @@ createCableDrag({
   enabled: () => tool === 'hand',
   showPortHint: room.showPortHint,
 });
-const shorten = createShortenTool({
+const velcro = createVelcroTool({
   canvas,
   camera: stage.camera,
-  controls: rig.controls,
+  scene: stage.scene,
   world: room.world,
-  active: () => tool === 'shorten',
-  show(text) {
-    clearTimeout(hintTimer);
-    hud.setHint(text ?? (placement.held ? holdHint(placement.held) : null));
-  },
+  active: () => tool === 'velcro',
+  flash: (text) => flashHint(text),
 });
 const inspector = createInspector({
   root: hudRoot,
@@ -178,6 +175,12 @@ const advance = () => {
 // 배선·전원·설치가 바뀌면 바로 LED·수익에 반영
 events.on('cable:plugged', advance);
 events.on('cable:unplugged', advance);
+events.on('cable:tied', advance);
+events.on('cable:untied', advance);
+// 손으로 세게 당겨 떨어진 것 (벨크로 도구로 푼 건 도구가 안내함)
+events.on('cable:untied', () => {
+  if (tool === 'hand') flashHint('🔗 벨크로가 떨어졌어요');
+});
 events.on('device:power', advance);
 events.on('device:installed', advance);
 events.on('device:removed', advance);
@@ -220,7 +223,6 @@ const perf = { physMs: 0, frames: 0, fps: 0, since: performance.now() };
 startLoop({
   update(dt) {
     const t0 = performance.now();
-    shorten.update(dt);
     room.world.step(dt);
     perf.physMs += (performance.now() - t0 - perf.physMs) * 0.05;
   },
@@ -233,6 +235,7 @@ startLoop({
     hud.setModel({ money: state.money, ...room.summary, incomePerSec: room.incomePerSec, airflow: room.airflow, pduWarn: pduWarn() });
     inspector.update();
     room.sync(performance.now() / 1000);
+    velcro.sync();
     stage.renderer.render(stage.scene, stage.camera);
 
     if (debug) {

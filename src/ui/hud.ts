@@ -35,7 +35,7 @@ const LED_HELP: [LedState, string][] = [
   ['dark', '꺼짐 · 배선 덜 됨'],
 ];
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
-const TOOL_KEYS: Record<string, ToolId> = { '1': 'hand', '2': 'shorten' };
+const TOOL_KEYS: Record<string, ToolId> = { '1': 'hand', '2': 'velcro' };
 
 /** 규칙 요약 (상단 바 가이드 버튼으로 열고 닫음) */
 const GUIDE_HTML = `
@@ -54,13 +54,13 @@ const GUIDE_HTML = `
   <ul>
     <li>스위치 랜 포트가 다 차면 스위치 24포트</li>
     <li>PDU는 콘센트 8개·3,000W. 넘으면 차단기가 내려가니 PDU를 추가해 나눠 꽂기</li>
-    <li>랙 뒤로 늘어진 케이블은 배기를 막아 🌀 공기 흐름이 떨어지고 수익이 최대 50% 줄어요. ✂ 줄이기로 남는 길이를 걷어 뒷면에 붙이기</li>
+    <li>랙 뒤로 늘어진 케이블은 배기를 막아 🌀 공기 흐름이 떨어지고 수익이 최대 50% 줄어요. 🔗 벨크로로 뒷면 기둥에 묶어 올리기</li>
   </ul>
   <h3>조작</h3>
   <ul>
     <li>가운데 버튼 드래그: 회전 · 오른쪽 또는 Shift+왼쪽 드래그: 이동 · 휠: 확대</li>
     <li>케이블 끄는 중 휠: 앞뒤로 밀기</li>
-    <li>✂ 줄이기 (2): 케이블을 누른 채 위로 끌면 줄고 아래로 끌면 늘어남 · 남는 길이를 걷으면 뒷면이 깔끔해져요 · ✋ 손 (1)로 돌아가기</li>
+    <li>🔗 벨크로 (2): 케이블을 클릭하면 가까운 뒷면 기둥을 따라 끌어올려 묶음 · 묶인 곳을 다시 클릭하면 풀기 · 손으로 세게 당겨도 떨어져요</li>
     <li>장비 클릭: 정보 카드 (켜기·끄기·빼기) · Esc: 취소</li>
   </ul>
 `;
@@ -88,7 +88,7 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
       </div>
       <div class="group" role="group" aria-label="도구">
         <button class="on" data-tool="hand" title="케이블 잡아 끌기·꽂기 (1)">✋ 손</button>
-        <button data-tool="shorten" title="케이블을 위로 끌면 줄고 아래로 끌면 늘어남 (2)">✂ 줄이기</button>
+        <button data-tool="velcro" title="케이블을 클릭하면 뒷면 기둥에 묶음, 다시 클릭하면 풀기 (2)">🔗 벨크로</button>
       </div>
     </nav>
     <div class="hud-debug" hidden></div>
