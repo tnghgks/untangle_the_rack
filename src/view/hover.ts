@@ -5,11 +5,14 @@ import type { Room } from './room';
 
 // 클릭할 수 있는 것 위에 커서를 올리면 은은하게 밝히고 커서를 바꾼다 (10-25 플레이 피드백).
 // 고르는 순서는 클릭 우선순위와 같음: 전원 버튼 → 케이블 → 장비 몸체(정보 카드).
-// 전원 버튼·장비는 pointer, 케이블은 grab (벨크로 도구면 copy). 장비를 든 동안·드래그 중에는 강조를 끄고 커서는 그쪽에 맡긴다.
+// 전원 버튼·장비는 pointer, 케이블은 grab (벨크로 도구도 끌 수 있어 grab, 기둥 위 커서는 velcro.ts). 장비를 든 동안·드래그 중에는 강조를 끄고 커서는 그쪽에 맡긴다.
+// 판매 도구면 커서는 pointer, 강조는 붉게.
 
 const GLOW: Record<Kind, number> = { button: 0x2c6640, cable: 0x3a3f48, device: 0x22344a };
 const CURSOR: Record<Kind, string> = { button: 'pointer', cable: 'grab', device: 'pointer' };
-const CABLE_CURSOR: Record<ToolId, string> = { hand: 'grab', velcro: 'copy' };
+const CABLE_CURSOR: Record<ToolId, string> = { hand: 'grab', velcro: 'grab', sell: 'pointer' };
+/** 판매 도구: 팔릴 대상은 붉게 */
+const SELL_GLOW = 0x6a1f1f;
 
 type Kind = 'button' | 'cable' | 'device';
 
@@ -28,12 +31,13 @@ export function createHover({ canvas, camera, room, busy, tool }: HoverDeps): vo
   const light = (mats: THREE.MeshStandardMaterial[], kind: Kind | null) => {
     for (const m of lit) m.emissive.setHex(0x000000);
     lit = mats;
-    if (kind) for (const m of lit) m.emissive.setHex(GLOW[kind]);
+    if (kind) for (const m of lit) m.emissive.setHex(tool() === 'sell' ? SELL_GLOW : GLOW[kind]);
   };
 
   const find = (x: number, y: number): [Kind, THREE.MeshStandardMaterial[]] | null => {
     const rect = canvas.getBoundingClientRect();
-    const button = pickPowerButton(room.devices, camera, x, y, rect);
+    // 판매 도구에선 전원 버튼도 장비의 일부 (판매가 클릭을 먼저 받음)
+    const button = tool() === 'sell' ? null : pickPowerButton(room.devices, camera, x, y, rect);
     if (button?.button) return ['button', [button.button.material as THREE.MeshStandardMaterial]];
     const cable = pickCable(room.world.cables, camera, x, y, rect)?.cable;
     const mesh = cable && room.meshes.find((m) => m.cable === cable);

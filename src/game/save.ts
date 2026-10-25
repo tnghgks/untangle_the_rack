@@ -29,6 +29,8 @@ export interface SavedCable {
   nodes: number[];
   /** 벨크로: 묶은 마디와 고정 자리. 없으면 안 묶음 (P4 이전 저장) */
   ties?: { node: number; pos: [number, number, number] }[];
+  /** 상점에서 낸 값 (판매 환급용). 없으면 0 — 시작 배선·옛 저장 */
+  paid?: number;
 }
 
 export interface SaveData {
@@ -78,7 +80,8 @@ function isSave(d: unknown): d is SaveData {
     typeof x?.id === 'string' && (x.kind === 'lan' || x.kind === 'power') && num(x.color) &&
     Array.isArray(x.ends) && x.ends.length === 2 && x.ends.every(portId) &&
     Array.isArray(x.nodes) && x.nodes.length % 3 === 0 && x.nodes.every(num) &&
-    (x.ties === undefined || (Array.isArray(x.ties) && x.ties.every(tieOk))));
+    (x.ties === undefined || (Array.isArray(x.ties) && x.ties.every(tieOk))) &&
+    (x.paid === undefined || (num(x.paid) && x.paid >= 0)));
   return devOk && cabOk;
 }
 

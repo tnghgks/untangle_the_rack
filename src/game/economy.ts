@@ -30,3 +30,26 @@ export function spend(state: GameState, price: number): boolean {
   state.money -= price;
   return true;
 }
+
+/** 판매 환급 비율 (10-25 결정: 산 값의 50%) */
+export const SELL_RATE = 0.5;
+
+/**
+ * 장비 판매: 마지막으로 산 가격의 SELL_RATE를 돌려주고 다음 가격을 한 단계 내림. 돌려준 돈을 돌려준다.
+ * 산 기록이 없으면(시작 지급 장비만 남음) 0원
+ */
+export function sellDevice(state: GameState, def: DeviceDef): number {
+  const n = state.bought[def.id] ?? 0;
+  if (n <= 0) return 0;
+  const refund = Math.round(priceOf(def, n - 1) * SELL_RATE);
+  state.bought[def.id] = n - 1;
+  state.money += refund;
+  return refund;
+}
+
+/** 케이블 판매: 낸 값(paid)의 SELL_RATE. 시작 배선은 0원 */
+export function sellCable(state: GameState, paid: number): number {
+  const refund = paid * SELL_RATE;
+  state.money += refund;
+  return refund;
+}

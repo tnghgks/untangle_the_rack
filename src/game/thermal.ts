@@ -13,14 +13,20 @@ export const FULL_BLOCK = 4;
 /** 공기 흐름 0%일 때 수익 감소 비율 */
 export const MAX_THROTTLE = 0.5;
 
-/** 마디 사이 토막 중 가운데 점이 상자 안인 토막 길이의 합 (토막이 짧아 이 정도면 충분) */
-export function lengthInBox(pos: ArrayLike<number>, n: number, box: Aabb): number {
+/** 마디 i..i+1 토막의 가운데 점이 상자 안인지 (토막이 짧아 이 정도면 충분) */
+export function segmentInBox(pos: ArrayLike<number>, i: number, box: Aabb): boolean {
   const { min, max } = box;
+  const a = i * 3, b = a + 3;
+  const mx = (pos[a] + pos[b]) / 2, my = (pos[a + 1] + pos[b + 1]) / 2, mz = (pos[a + 2] + pos[b + 2]) / 2;
+  return mx >= min[0] && mx <= max[0] && my >= min[1] && my <= max[1] && mz >= min[2] && mz <= max[2];
+}
+
+/** 상자 안을 지나는 토막 길이의 합 */
+export function lengthInBox(pos: ArrayLike<number>, n: number, box: Aabb): number {
   let L = 0;
   for (let i = 1; i < n; i++) {
+    if (!segmentInBox(pos, i - 1, box)) continue;
     const a = (i - 1) * 3, b = i * 3;
-    const mx = (pos[a] + pos[b]) / 2, my = (pos[a + 1] + pos[b + 1]) / 2, mz = (pos[a + 2] + pos[b + 2]) / 2;
-    if (mx < min[0] || mx > max[0] || my < min[1] || my > max[1] || mz < min[2] || mz > max[2]) continue;
     L += Math.hypot(pos[b] - pos[a], pos[b + 1] - pos[a + 1], pos[b + 2] - pos[a + 2]);
   }
   return L;

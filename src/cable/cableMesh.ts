@@ -1,9 +1,12 @@
 import * as THREE from 'three';
 import { CABLE_RADIUS, type Cable } from './cable';
+import type { Aabb } from './collide';
+import { segmentInBox } from '../game/thermal';
 
 // 튜브 메시: 노드 사이를 Catmull-Rom으로 SUBDIV 등분한 곡선에 링을 하나씩.
 // 버퍼는 한 번 만들고 매 프레임 정점·법선만 다시 쓴다.
 // 링 방향은 투영식 평행 이동(이전 법선을 접선에 수직으로 투영)이라 꼬이지 않는다.
+// 배기 통로(zone)를 막는 토막은 주황빛으로 깜빡인다 (정리할 곳 표시, 10-25). 꽂힌 케이블만 — 공기 흐름 계산(thermal.ts)과 같은 기준.
 
 const RADIAL = 8;
 const SUBDIV = 3;
@@ -17,6 +20,8 @@ const CONNECTOR: Record<Cable['kind'], { size: THREE.Vector3; color: number }> =
 };
 
 const Z = new THREE.Vector3(0, 0, 1);
+const HOT = new THREE.Color(0xff5a1f);
+const mix = new THREE.Color();
 
 export class CableMesh {
   readonly group = new THREE.Group();
@@ -28,12 +33,23 @@ export class CableMesh {
   private readonly rings: number;
   readonly plugs: [THREE.Mesh, THREE.Mesh];
   private synced = -1;
+  private readonly colors: Float32Array;
+  private readonly base: THREE.Color;
+  /** 토막마다 배기 통로를 막는지 (모양이 바뀔 때 다시 셈) */
+  private readonly blocked: Uint8Array;
+  private anyBlocked = false;
+  /** 색을 기본색으로 되돌려야 하는지 */
+  private tinted = false;
 
-  constructor(readonly cable: Cable) {
+  constructor(readonly cable: Cable, private readonly zone: Aabb | null = null) {
     const m = (this.rings = (cable.rope.n - 1) * SUBDIV + 1);
     this.curve = new Float32Array(m * 3);
     this.positions = new Float32Array(m * RADIAL * 3);
     this.normals = new Float32Array(m * RADIAL * 3);
+    this.colors = new Float32Array(m * RADIAL * 3);
+    this.blocked = new Uint8Array(cable.rope.n - 1);
+    this.base = new THREE.Color(cable.color);
+    this.paint(0);
     const index: number[] = [];
     for (let i = 0; i < m - 1; i++) {
       for (let k = 0; k < RADIAL; k++) {
@@ -47,9 +63,10 @@ export class CableMesh {
     const geo = new THREE.BufferGeometry();
     geo.setAttribute('position', new THREE.BufferAttribute(this.positions, 3).setUsage(THREE.DynamicDrawUsage));
     geo.setAttribute('normal', new THREE.BufferAttribute(this.normals, 3).setUsage(THREE.DynamicDrawUsage));
+    geo.setAttribute('color', new THREE.BufferAttribute(this.colors, 3).setUsage(THREE.DynamicDrawUsage));
     geo.setIndex(index);
 
-    this.tube = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: cable.color, roughness: 0.55 }));
+    this.tube = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: 0xffffff, vertexColors: true, roughness: 0.55 }));
     this.tube.castShadow = true;
     this.tube.frustumCulled = false; // 매 프레임 모양이 바뀌어 경계 구 계산을 생략
     this.group.add(this.tube);
@@ -65,10 +82,13 @@ export class CableMesh {
     }
   }
 
-  update(): void {
+  /** timeSec: 막힌 토막 깜빡임용 */
+  update(timeSec = 0): void {
     const { rope } = this.cable;
+    if (this.anyBlocked || this.tinted) this.paint(timeSec);
     if (rope.version === this.synced) return;
     this.synced = rope.version;
+    this.findBlocked();
 
     const n = rope.n;
     this.buildCurve(rope.pos, n);
@@ -108,6 +128,35 @@ export class CableMesh {
 
     this.placePlug(this.plugs[0], 0, 1);
     this.placePlug(this.plugs[1], n - 1, n - 2);
+  }
+
+  private findBlocked(): void {
+    const { zone, blocked, cable } = this;
+    this.anyBlocked = false;
+    if (!zone) return;
+    const plugged = cable.ends[0] !== null || cable.ends[1] !== null;
+    for (let i = 0; i < blocked.length; i++) {
+      blocked[i] = plugged && segmentInBox(cable.rope.pos, i, zone) ? 1 : 0;
+      if (blocked[i]) this.anyBlocked = true;
+    }
+  }
+
+  /** 링마다 색: 막힌 토막은 기본색과 주황 사이를 오감 */
+  private paint(timeSec: number): void {
+    const { colors, blocked, base } = this;
+    const hot = mix.copy(base).lerp(HOT, 0.45 + 0.4 * Math.sin(timeSec * 6));
+    const last = blocked.length - 1;
+    for (let i = 0; i < this.rings; i++) {
+      const c = this.anyBlocked && blocked[Math.min(last, Math.floor(i / SUBDIV))] ? hot : base;
+      for (let k = 0; k < RADIAL; k++) {
+        const o = (i * RADIAL + k) * 3;
+        colors[o] = c.r; colors[o + 1] = c.g; colors[o + 2] = c.b;
+      }
+    }
+    this.tinted = this.anyBlocked;
+    // 생성자에서 처음 칠할 땐 아직 메시가 없음
+    const attr = this.tube?.geometry.getAttribute('color');
+    if (attr) attr.needsUpdate = true;
   }
 
   /** 노드 i..i+1 구간을 이웃 노드까지 써서 Catmull-Rom으로 나눔 (양 끝은 끝 노드를 반복) */

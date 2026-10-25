@@ -1,7 +1,7 @@
 // 타입 있는 이벤트 버스. 이벤트 이름과 페이로드는 GameEvents 한 곳에서 정의한다.
 
 export type ViewMode = 'front' | 'back' | 'free';
-export type ToolId = 'hand' | 'velcro';
+export type ToolId = 'hand' | 'velcro' | 'sell';
 
 export interface GameEvents {
   'view:set': ViewMode;

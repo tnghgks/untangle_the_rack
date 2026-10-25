@@ -4,6 +4,7 @@ import { createStage } from './view/scene';
 import { createCameraRig } from './view/camera';
 import { createCableDrag } from './view/drag';
 import { createVelcroTool } from './view/velcro';
+import { createSellTool } from './view/sell';
 import { createStartRoom, restoreRoom } from './view/room';
 import { createPowerButtons } from './view/powerButton';
 import { createHover } from './view/hover';
@@ -13,7 +14,8 @@ import { events, type ToolId } from './core/events';
 import { createHud } from './ui/hud';
 import { createShop } from './ui/shop';
 import { createInspector } from './ui/inspector';
-import { priceOf, spend, tick } from './game/economy';
+import { formatMoney } from './ui/format';
+import { priceOf, sellCable, sellDevice, spend, tick } from './game/economy';
 import { boughtCount, createGameState } from './game/state';
 import { loadSave, SAVE_KEY, SAVE_VERSION, writeSave, type SaveData } from './game/save';
 
@@ -56,7 +58,7 @@ const buy = (id: DeviceDefId): boolean => {
   return true;
 };
 
-// 입력 우선순위는 등록 순서: 장비 들기 → 전원 버튼 → 케이블 드래그(손)·벨크로 → 장비 정보 카드 → OrbitControls
+// 입력 우선순위는 등록 순서: 장비 들기 → 판매 → 전원 버튼 → 벨크로 → 케이블 드래그(손) → 장비 정보 카드 → OrbitControls
 const placement = createPlacement({
   canvas,
   camera: stage.camera,
@@ -82,27 +84,52 @@ const reinstall = (id: DeviceDefId, u: number, moving: MovingDevice) => {
   // device:installed의 "전원 버튼을 누르세요" 안내를 덮어씀 (켜진 채 뺐으면 이미 켜져 있음)
   flashHint(`${DEVICES[id].name}: U${u}에 다시 끼움 · 뒷면에서 케이블을 다시 꽂으세요${moving.on ? '' : ' · 앞면 전원 버튼을 누르세요'}`);
 };
-createPowerButtons(canvas, stage.camera, rig.controls, room);
 let tool: ToolId = 'hand';
 events.on('tool:set', (t) => {
   tool = t;
-  if (t === 'velcro') flashHint('🔗 벨크로: 케이블을 클릭하면 뒷면 기둥에 묶어 올려요 · 묶인 곳을 다시 클릭하면 풀기 · 1 손으로 돌아가기');
+  if (t === 'velcro') flashHint('🔗 벨크로: 케이블을 끌어 뒷면 기둥 위에 대고 Space(또는 오른쪽 클릭)로 감기 · 띠를 클릭하면 풀기');
+  if (t === 'sell') flashHint('💰 판매: 장비나 케이블을 클릭하면 바로 팔아요 (산 값의 50%) · 1 손으로 돌아가기');
 });
-createCableDrag({
+// 판매는 전원 버튼·케이블 끌기·정보 카드보다 먼저 — 클릭 즉시 판다
+createSellTool({
   canvas,
   camera: stage.camera,
-  controls: rig.controls,
-  world: room.world,
-  enabled: () => tool === 'hand',
-  showPortHint: room.showPortHint,
+  room,
+  active: () => tool === 'sell',
+  sellDevice(device) {
+    if (!room.remove(device, true)) return;
+    inspector.close();
+    const refund = sellDevice(state, device.def);
+    shop.refresh();
+    flashHint(`💰 ${device.def.name} 판매 ${refund > 0 ? `+${formatMoney(refund)}` : '(시작 지급이라 환급 없음)'}`);
+  },
+  sellCable(cable) {
+    room.removeCable(cable);
+    const refund = sellCable(state, cable.paid);
+    shop.refresh();
+    flashHint(`💰 ${cable.kind === 'lan' ? '랜선' : '전원선'} 판매 ${refund > 0 ? `+${formatMoney(refund)}` : '(시작 배선이라 환급 없음)'}`);
+  },
 });
+createPowerButtons(canvas, stage.camera, rig.controls, room);
+// 벨크로는 케이블 끌기보다 먼저 — 기둥 위 클릭을 가로챈다
 const velcro = createVelcroTool({
   canvas,
   camera: stage.camera,
   scene: stage.scene,
   world: room.world,
+  drag: () => cableDrag,
   active: () => tool === 'velcro',
   flash: (text) => flashHint(text),
+});
+const cableDrag = createCableDrag({
+  canvas,
+  camera: stage.camera,
+  controls: rig.controls,
+  world: room.world,
+  // 벨크로 도구로도 끌어서 기둥에 걸침
+  enabled: () => tool === 'hand' || tool === 'velcro',
+  showPortHint: room.showPortHint,
+  snap: (ray) => velcro.snap(ray),
 });
 const inspector = createInspector({
   root: hudRoot,
@@ -154,9 +181,12 @@ const shop = createShop(hud.shopPanel, {
   },
   onBuyCable: (id) => {
     if (!spend(state, CABLES[id].price)) return;
-    room.spawnCable(CABLES[id].kind);
+    const cable = room.spawnCable(CABLES[id].kind, CABLES[id].price);
     shop.refresh();
-    flashHint(`${CABLES[id].name}이 랙 뒤 바닥에 놓였어요`);
+    // 손 도구로 바꾸고 한쪽 끝을 든 채로 → 포트 위에서 클릭하면 바로 꽂힘
+    events.emit('tool:set', 'hand');
+    cableDrag.carry(cable, 0);
+    flashHint(`${CABLES[id].name}: 커넥터를 들고 있어요 · 포트 위에서 클릭해 꽂기 · 빈 곳 클릭·Esc는 내려놓기`);
   },
 });
 if (debug) Object.assign(window, { room, rig, stage, placement, state, inspector, save: () => save() });
@@ -177,10 +207,8 @@ events.on('cable:plugged', advance);
 events.on('cable:unplugged', advance);
 events.on('cable:tied', advance);
 events.on('cable:untied', advance);
-// 손으로 세게 당겨 떨어진 것 (벨크로 도구로 푼 건 도구가 안내함)
-events.on('cable:untied', () => {
-  if (tool === 'hand') flashHint('🔗 벨크로가 떨어졌어요');
-});
+// 손으로 세게 당겨 떨어진 것 (띠를 클릭해 푼 건 벨크로 도구의 안내가 바로 뒤에 덮어씀)
+events.on('cable:untied', () => flashHint('🔗 벨크로가 떨어졌어요'));
 events.on('device:power', advance);
 events.on('device:installed', advance);
 events.on('device:removed', advance);

@@ -35,7 +35,7 @@ const LED_HELP: [LedState, string][] = [
   ['dark', '꺼짐 · 배선 덜 됨'],
 ];
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
-const TOOL_KEYS: Record<string, ToolId> = { '1': 'hand', '2': 'velcro' };
+const TOOL_KEYS: Record<string, ToolId> = { '1': 'hand', '2': 'velcro', '3': 'sell' };
 
 /** 규칙 요약 (상단 바 가이드 버튼으로 열고 닫음) */
 const GUIDE_HTML = `
@@ -44,7 +44,7 @@ const GUIDE_HTML = `
   <h3>설치 순서</h3>
   <ol>
     <li>상점에서 장비를 고르고 랙의 빈 칸을 클릭</li>
-    <li>상점에서 전원선·랜선 구매 (랙 뒤 바닥에 놓임)</li>
+    <li>상점에서 전원선·랜선 구매 → 한쪽 커넥터를 든 채로 시작, 포트 위에서 클릭하면 꽂힘 (나머지 끝은 랙 뒤 바닥)</li>
     <li>뒷면에서 케이블 끝을 끌어 포트에 꽂기: 전원선 → 옆면 PDU 콘센트, 랜선 → 스위치</li>
     <li>앞면 전원 버튼 → 3초 부팅 → 수익 시작</li>
   </ol>
@@ -54,13 +54,14 @@ const GUIDE_HTML = `
   <ul>
     <li>스위치 랜 포트가 다 차면 스위치 24포트</li>
     <li>PDU는 콘센트 8개·3,000W. 넘으면 차단기가 내려가니 PDU를 추가해 나눠 꽂기</li>
-    <li>랙 뒤로 늘어진 케이블은 배기를 막아 🌀 공기 흐름이 떨어지고 수익이 최대 50% 줄어요. 🔗 벨크로로 뒷면 기둥에 묶어 올리기</li>
+    <li>랙 뒤로 늘어진 케이블은 배기를 막아 🌀 공기 흐름이 떨어지고 수익이 최대 50% 줄어요. 막는 부분은 주황빛으로 깜빡여요 · 🔗 벨크로로 뒷면 기둥에 묶기</li>
   </ul>
   <h3>조작</h3>
   <ul>
     <li>가운데 버튼 드래그: 회전 · 오른쪽 또는 Shift+왼쪽 드래그: 이동 · 휠: 확대</li>
-    <li>케이블 끄는 중 휠: 앞뒤로 밀기</li>
-    <li>🔗 벨크로 (2): 케이블을 클릭하면 가까운 뒷면 기둥을 따라 끌어올려 묶음 · 묶인 곳을 다시 클릭하면 풀기 · 손으로 세게 당겨도 떨어져요</li>
+    <li>케이블 끄는 중 휠: 앞뒤로 밀기 · 꽂힌 커넥터는 직접 잡고 끌어야 뽑힘 (케이블을 당겨도 안 빠짐)</li>
+    <li>🔗 벨크로 (2): 케이블을 끌어 뒷면 기둥 위에 대면 기둥에 붙음 → 든 채로 Space(또는 오른쪽 클릭)로 띠 감기 · 같은 높이에 또 감으면 한 다발 · 띠를 클릭하면 풀기 · 세게 당기면 떨어져요</li>
+    <li>💰 판매 (3): 장비나 케이블을 클릭하면 바로 판매, 산 값의 50% 환급 (시작 지급은 0원)</li>
     <li>장비 클릭: 정보 카드 (켜기·끄기·빼기) · Esc: 취소</li>
   </ul>
 `;
@@ -88,7 +89,8 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
       </div>
       <div class="group" role="group" aria-label="도구">
         <button class="on" data-tool="hand" title="케이블 잡아 끌기·꽂기 (1)">✋ 손</button>
-        <button data-tool="velcro" title="케이블을 클릭하면 뒷면 기둥에 묶음, 다시 클릭하면 풀기 (2)">🔗 벨크로</button>
+        <button data-tool="velcro" title="케이블을 끌어 기둥에 대고 Space로 띠 감기, 띠를 클릭하면 풀기 (2)">🔗 벨크로</button>
+        <button data-tool="sell" title="장비나 케이블을 클릭하면 바로 판매, 산 값의 50% 환급 (3)">💰 판매</button>
       </div>
     </nav>
     <div class="hud-debug" hidden></div>

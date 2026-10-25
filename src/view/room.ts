@@ -3,7 +3,7 @@ import { createCable, CableWorld, type Cable, type Port, type PortKind } from '.
 import { CableMesh } from '../cable/cableMesh';
 import type { Aabb, Vec3 } from '../cable/collide';
 import { plug, unplug, type PortHit } from '../cable/plug';
-import { restoreTie } from '../cable/velcro';
+import { restoreTie, untie } from '../cable/velcro';
 import { events } from '../core/events';
 import { createRng } from '../core/rng';
 import type { DeviceDefId } from '../data/catalog';
@@ -98,10 +98,10 @@ export class Room {
     for (const c of this.world.cables) c.rope.wake();
   }
 
-  /** 랙 장비를 뺌: 꽂힌 케이블을 뽑고 포트·충돌 상자·메시를 걷어냄. 옆면 PDU는 못 뺌 */
-  remove(device: Device): boolean {
+  /** 랙 장비를 뺌: 꽂힌 케이블을 뽑고 포트·충돌 상자·메시를 걷어냄. 옆면 PDU는 판매(allowPdu)로만 뺀다 */
+  remove(device: Device, allowPdu = false): boolean {
     const i = this.devices.indexOf(device);
-    if (i < 0 || device.u === null) return false;
+    if (i < 0 || (device.u === null && !allowPdu)) return false;
     for (const port of device.ports) {
       if (port.plugged) unplug(port.plugged.cable, port.plugged.end);
       if (this.hinted?.port === port) this.hinted = null;
@@ -114,7 +114,7 @@ export class Room {
     removeWhere(this.world.colliders, (b) => boxes.has(b));
     this.devices.splice(i, 1);
     this.slots.remove(device.id);
-    this.rack.remove(device.group);
+    device.group.removeFromParent(); // 랙 장비는 랙 그룹, PDU는 장면에 붙어 있음
     device.group.traverse((o) => {
       if (!(o instanceof THREE.Mesh)) return;
       o.geometry.dispose();
@@ -171,7 +171,7 @@ export class Room {
     const color = saved?.color ?? (kind === 'lan' ? LAN_COLORS[n % LAN_COLORS.length] : POWER_COLOR);
     const c = createCable(saved?.id ?? `cable-${n}`, kind, CABLE_DEFAULT_LENGTH, color);
     this.world.cables.push(c);
-    const m = new CableMesh(c);
+    const m = new CableMesh(c, EXHAUST_ZONE);
     this.scene.add(m.group);
     this.meshes.push(m);
     return c;
@@ -181,13 +181,29 @@ export class Room {
    * 상점에서 산 케이블: 랙 바로 뒤 바닥에 U자로 접어 놓음. 양 끝은 PDU 쪽(-x)에 모여
    * 뒷면 시점에서 하단 툴바·상점 패널에 가리지 않는다. 놓을 때마다 조금씩 뒤로
    */
-  spawnCable(kind: PortKind): Cable {
+  spawnCable(kind: PortKind, paid = 0): Cable {
     const c = this.addCable(kind);
+    c.paid = paid;
     const z = -0.62 - (this.spawned++ % 4) * 0.12;
     const y = c.rope.cfg.radius + 0.02;
     const x0 = -0.42, x1 = 0.5, w = 0.08;
     c.rope.setFromPolyline([[x0, y, z], [x1, y, z], [x1, y, z - w], [x0, y, z - w]]);
     return c;
+  }
+
+  /** 케이블을 없앰 (판매): 뽑고 벨크로를 풀고 메시를 걷어냄 */
+  removeCable(cable: Cable): void {
+    const i = this.world.cables.indexOf(cable);
+    if (i < 0) return;
+    for (const end of [0, 1] as const) unplug(cable, end);
+    for (const t of [...cable.ties]) untie(cable, t);
+    this.world.cables.splice(i, 1);
+    const k = this.meshes.findIndex((m) => m.cable === cable);
+    if (k >= 0) {
+      this.scene.remove(this.meshes[k].group);
+      this.meshes[k].dispose();
+      this.meshes.splice(k, 1);
+    }
   }
 
   /** 시작 배선: 두 포트 사이를 바닥에 늘어진 모양으로 미리 깔고 꽂음 */
@@ -218,6 +234,7 @@ export class Room {
         ends: [c.ends[0]?.id ?? null, c.ends[1]?.id ?? null],
         nodes: Array.from(c.rope.pos, round3),
         ...(c.ties.length ? { ties: c.ties.map((t) => ({ node: t.node, pos: t.pos.map(round3) as [number, number, number] })) } : {}),
+        ...(c.paid ? { paid: c.paid } : {}),
       }));
     return { serial: this.serial, spawned: this.spawned, devices, cables };
   }
@@ -233,6 +250,7 @@ export class Room {
     const portById = new Map(this.world.ports.map((p) => [p.id, p]));
     for (const saved of data.cables) {
       const c = this.addCable(saved.kind, saved);
+      c.paid = saved.paid ?? 0;
       const { rope } = c;
       if (saved.nodes.length === rope.pos.length) {
         rope.pos.set(saved.nodes);
@@ -278,7 +296,7 @@ export class Room {
 
   /** 메시 갱신 + 빈 포트 깜빡임 */
   sync(timeSec: number): void {
-    for (const m of this.meshes) m.update();
+    for (const m of this.meshes) m.update(timeSec);
     const k = 0.25 + 0.25 * Math.sin(timeSec * 5);
     for (const s of this.sockets.values()) {
       if (s === this.hinted) continue;

@@ -25,12 +25,14 @@ export interface Cable {
   color: number;
   /** 뒷면 기둥에 묶은 벨크로 (velcro.ts) */
   ties: Tie[];
+  /** 상점에서 낸 값 (판매 환급용). 시작 배선은 0 */
+  paid: number;
 }
 
 export const CABLE_RADIUS: Record<PortKind, number> = { lan: 0.003, power: 0.004 };
 
 export function createCable(id: string, kind: PortKind, length: number, color: number): Cable {
-  return { id, kind, rope: new Rope(length, { radius: CABLE_RADIUS[kind] }), ends: [null, null], color, ties: [] };
+  return { id, kind, rope: new Rope(length, { radius: CABLE_RADIUS[kind] }), ends: [null, null], color, ties: [], paid: 0 };
 }
 
 export function endNode(cable: Cable, end: CableEnd): number {
