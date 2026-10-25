@@ -75,7 +75,10 @@ const placement = createPlacement({
 /** 뺀 장비를 같은 id로 다시 끼움. 전원 버튼 상태는 뺄 때 그대로 */
 const reinstall = (id: DeviceDefId, u: number, moving: MovingDevice) => {
   const device = room.install(id, u, moving.id);
-  if (device && moving.on) room.setPower(device, true);
+  if (!device) return;
+  if (moving.on) room.setPower(device, true);
+  // device:installed의 "전원 버튼을 누르세요" 안내를 덮어씀 (켜진 채 뺐으면 이미 켜져 있음)
+  flashHint(`${DEVICES[id].name}: U${u}에 다시 끼움 · 뒷면에서 케이블을 다시 꽂으세요${moving.on ? '' : ' · 앞면 전원 버튼을 누르세요'}`);
 };
 createPowerButtons(canvas, stage.camera, rig.controls, room);
 createCableDrag({
