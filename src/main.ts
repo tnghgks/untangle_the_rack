@@ -117,6 +117,8 @@ events.on('cable:plugged', advance);
 events.on('cable:unplugged', advance);
 events.on('device:power', advance);
 events.on('device:installed', advance);
+events.on('pdu:reset', advance);
+events.on('pdu:tripped', () => flashHint('PDU 과부하 · 차단기가 내려갔어요 · 부하를 줄이고 PDU를 클릭해 리셋하세요'));
 // 렌더 루프가 멈추는 백그라운드 탭에서도 돌도록 (브라우저가 1초 이상으로 늦춰도 시간 차이로 계산)
 window.setInterval(() => {
   advance();

@@ -9,6 +9,9 @@ export interface GameEvents {
   'cable:unplugged': { cableId: string; portId: string };
   'device:installed': { deviceId: string };
   'device:power': { deviceId: string; on: boolean };
+  /** PDU 과부하로 차단기가 내려감 / 다시 올림 */
+  'pdu:tripped': { deviceId: string };
+  'pdu:reset': { deviceId: string };
   /** 상점에서 장비를 든/내려놓은 상태 (null = 빈손) */
   'placement:held': string | null;
 }

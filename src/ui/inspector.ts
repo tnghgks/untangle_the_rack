@@ -13,9 +13,9 @@ const CLICK_PX = 5;
 
 const STATUS_TEXT: Record<PowerStatus, [string, string]> = {
   off: ['꺼짐', '앞면 전원 버튼을 누르세요'],
-  nopower: ['전기 없음', '뒷면 전원 포트를 PDU 콘센트에 연결하세요'],
+  nopower: ['전기 없음', '뒷면 전원 포트를 PDU 콘센트에 연결하세요 (차단된 PDU는 전기를 안 줌)'],
   booting: ['부팅 중', '잠시 후 가동'],
-  nolink: ['네트워크 없음', '랜 포트를 켜진 스위치에 연결하세요'],
+  nolink: ['네트워크 없음', '랜 포트를 켜진 스위치에 연결하세요 (빈 포트가 없으면 스위치 24포트)'],
   running: ['가동 중', ''],
 };
 
@@ -51,6 +51,7 @@ export function createInspector({ root, canvas, camera, controls, room }: Inspec
     if (!t || !device) return;
     if (t.dataset.act === 'close') close();
     else if (t.dataset.act === 'power') room.setPower(device, !device.on);
+    else if (t.dataset.act === 'reset') room.resetBreaker(device);
   });
 
   const close = () => {
@@ -104,7 +105,7 @@ export function createInspector({ root, canvas, camera, controls, room }: Inspec
     };
     const lines: string[] = [];
     if (p.role === 'pdu') {
-      lines.push(`부하 ${p.load.toLocaleString('ko-KR')} / ${p.capacity.toLocaleString('ko-KR')}W`);
+      lines.push(`부하 ${(p.tripped ? p.demand : p.load).toLocaleString('ko-KR')} / ${p.capacity.toLocaleString('ko-KR')}W`);
       lines.push(`콘센트 ${used('power')} 사용`);
     } else {
       if (d.def.incomePerSec > 0) lines.push(`수익 ${formatRate(d.def.incomePerSec)}${p.status === 'running' ? '' : ' (멈춤)'}`);
@@ -114,10 +115,12 @@ export function createInspector({ root, canvas, camera, controls, room }: Inspec
     }
     return `
       <div class="head"><b>${d.def.name}</b> <small>${where}</small><button class="x" data-act="close" aria-label="닫기">×</button></div>
-      <div class="status s-${p.role === 'pdu' ? 'running' : p.status}">● ${p.role === 'pdu' ? (p.tripped ? '차단됨' : '공급 중') : label}</div>
+      <div class="status s-${p.role === 'pdu' ? (p.tripped ? 'nolink' : 'running') : p.status}">● ${p.role === 'pdu' ? (p.tripped ? '차단됨 (과부하)' : '공급 중') : label}</div>
+      ${p.role === 'pdu' && p.tripped ? '<div class="help">장비를 끄거나 전원선을 다른 PDU로 옮긴 뒤 리셋하세요</div>' : ''}
       ${help && p.role !== 'pdu' ? `<div class="help">${help}</div>` : ''}
       ${lines.map((l) => `<div class="line">${l}</div>`).join('')}
       ${p.role !== 'pdu' ? `<button class="act" data-act="power">${d.on ? '끄기' : '켜기'}</button>` : ''}
+      ${p.role === 'pdu' && p.tripped ? '<button class="act" data-act="reset">차단기 리셋</button>' : ''}
     `;
   };
 

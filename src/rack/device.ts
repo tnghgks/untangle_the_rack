@@ -124,7 +124,7 @@ export function createRackDevice(id: string, defId: DeviceDefId, u: number): { d
 function powerOf(id: string, def: DeviceDef, role: PowerDevice['role'], ports: Port[]): PowerDevice {
   return {
     id, role, on: role === 'pdu', watts: def.watts, incomePerSec: def.incomePerSec, capacity: def.capacity ?? 0,
-    tripped: false, load: 0, ports: ports.map((p) => ({ id: p.id, kind: p.kind })), bootStart: null, status: 'off',
+    tripped: false, load: 0, demand: 0, ports: ports.map((p) => ({ id: p.id, kind: p.kind })), bootStart: null, status: 'off',
   };
 }
 
@@ -136,7 +136,9 @@ export function setDevicePower(device: Device, on: boolean): void {
 }
 
 export function setDeviceLed(device: Device, status: PowerStatus): void {
-  if (device.led) (device.led.material as THREE.MeshBasicMaterial).color.setHex(LED_COLOR[status]);
+  // PDU: 공급 중 초록, 차단 빨강
+  const color = device.power.role === 'pdu' ? LED_COLOR[status === 'running' ? 'running' : 'nolink'] : LED_COLOR[status];
+  if (device.led) (device.led.material as THREE.MeshBasicMaterial).color.setHex(color);
 }
 
 /** 옆면 바깥 세로 PDU. 자리는 왼쪽(0)·오른쪽(1) 두 곳 */
@@ -159,6 +161,10 @@ export function createPdu(id: string, side: number): { device: Device; sockets: 
   g.add(body);
 
   const outletZ = L.z - L.d / 2 - 0.002;
+  // 차단기 표시등: 콘센트 줄 위, 뒷면 쪽
+  const led = new THREE.Mesh(new THREE.SphereGeometry(0.006, 8, 8), new THREE.MeshBasicMaterial({ color: LED_COLOR.running }));
+  led.position.set(x, L.y1 - 0.03, outletZ);
+  g.add(led);
   const sockets: Socket[] = [];
   const ports: Port[] = [];
   for (let i = 0; i < L.outlets; i++) {
@@ -171,5 +177,5 @@ export function createPdu(id: string, side: number): { device: Device; sockets: 
     ports.push(port);
   }
   const power = powerOf(id, DEVICES.pdu, 'pdu', ports);
-  return { device: { id, def: DEVICES.pdu, u: null, on: true, ports, group: g, body, button: null, led: null, power }, sockets };
+  return { device: { id, def: DEVICES.pdu, u: null, on: true, ports, group: g, body, button: null, led, power }, sockets };
 }

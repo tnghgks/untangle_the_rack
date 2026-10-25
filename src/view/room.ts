@@ -7,7 +7,7 @@ import { events } from '../core/events';
 import { createRng } from '../core/rng';
 import type { DeviceDefId } from '../data/catalog';
 import { CABLE_DEFAULT_LENGTH, RACK_HEIGHT } from '../data/units';
-import { BOOT_MS, updatePower, type PowerSummary } from '../game/power';
+import { BOOT_MS, resetBreaker, updatePower, type PowerSummary } from '../game/power';
 import { createPdu, createRackDevice, PDU_SIDES, setDeviceLed, setDevicePower, type Device, type Socket } from '../rack/device';
 import { RackSlots } from '../rack/rack';
 import { collectColliders } from './scene';
@@ -105,13 +105,24 @@ export class Room {
       links.set(a.id, b.id);
       links.set(b.id, a.id);
     }
+    const wasTripped = new Set(this.devices.filter((d) => d.power.tripped));
     this.summary = updatePower(
       this.devices.map((d) => d.power),
       links,
       now,
     );
-    for (const d of this.devices) setDeviceLed(d, d.power.status);
+    for (const d of this.devices) {
+      setDeviceLed(d, d.power.status);
+      if (d.power.tripped && !wasTripped.has(d)) events.emit('pdu:tripped', { deviceId: d.id });
+    }
     return this.summary;
+  }
+
+  /** 차단기 올림. 부하가 그대로면 다음 판정에서 또 내려감 */
+  resetBreaker(pdu: Device): void {
+    if (!pdu.power.tripped) return;
+    resetBreaker(pdu.power);
+    events.emit('pdu:reset', { deviceId: pdu.id });
   }
 
   private addCable(kind: PortKind): Cable {
