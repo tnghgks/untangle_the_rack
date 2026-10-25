@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { Aabb } from '../cable/collide';
 import { RACK, RACK_HEIGHT, RACK_UNITS, U, uBottomY } from '../data/units';
 
 export interface Stage {
@@ -54,6 +55,11 @@ function addLights(scene: THREE.Scene) {
   const rim = new THREE.DirectionalLight(0x6fa8ff, 0.6);
   rim.position.set(-3, 2.5, -3);
   scene.add(rim);
+
+  // 뒷면 배선 작업용 보조광 (그림자 없음)
+  const back = new THREE.DirectionalLight(0xfff4e6, 0.9);
+  back.position.set(1.5, 3, -3.5);
+  scene.add(back);
 }
 
 function createFloor(): THREE.Group {
@@ -80,6 +86,7 @@ function box(w: number, h: number, d: number, mat: THREE.Material, x: number, y:
   m.position.set(x, y, z);
   m.castShadow = true;
   m.receiveShadow = true;
+  m.userData.solid = true; // 케이블 충돌 상자
   return m;
 }
 
@@ -106,18 +113,18 @@ function createRack(): THREE.Group {
       g.add(box(0.015, railH, 0.02, railMat, sx * (railWidth / 2 + 0.008), railY, z));
     }
   }
-
-  // M0용 자리표시 장비: U1 스위치, U3 엔트리 서버
-  g.add(createPlaceholderDevice('switch-8', 1, 1, 0x2e5b8a));
-  g.add(createPlaceholderDevice('server-entry', 3, 1, 0x4a4f57));
   return g;
 }
 
-function createPlaceholderDevice(name: string, u: number, sizeU: number, color: number): THREE.Group {
+/** 장비 몸체 깊이 (앞뒤 레일 사이). 뒷면 z = -DEVICE_DEPTH / 2 */
+export const DEVICE_DEPTH = RACK.depth - 0.16;
+
+/** M2 카탈로그 전까지 쓰는 자리표시 장비: 상자 + 앞면 LED */
+export function createPlaceholderDevice(name: string, u: number, sizeU: number, color: number): THREE.Group {
   const g = new THREE.Group();
   g.name = name;
   const h = sizeU * U - 0.002;
-  const d = RACK.depth - 0.16;
+  const d = DEVICE_DEPTH;
   const body = box(RACK.railWidth - 0.01, h, d, new THREE.MeshStandardMaterial({ color, metalness: 0.5, roughness: 0.5 }), 0, 0, 0);
   g.add(body);
 
@@ -131,4 +138,17 @@ function createPlaceholderDevice(name: string, u: number, sizeU: number, color: 
 
   g.position.set(0, uBottomY(u) + h / 2 + 0.001, 0);
   return g;
+}
+
+/** userData.solid 메시들의 월드 경계 상자 → 케이블 충돌용 */
+export function collectColliders(root: THREE.Object3D): Aabb[] {
+  root.updateMatrixWorld(true);
+  const out: Aabb[] = [];
+  const b = new THREE.Box3();
+  root.traverse((o) => {
+    if (!o.userData.solid) return;
+    b.setFromObject(o);
+    out.push({ min: [b.min.x, b.min.y, b.min.z], max: [b.max.x, b.max.y, b.max.z] });
+  });
+  return out;
 }

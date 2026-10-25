@@ -90,3 +90,15 @@ html, body {
   .hud-top { gap: 10px; font-size: 0.85rem; flex-wrap: wrap; right: 12px; }
   .hud-shop { top: auto; bottom: 64px; width: auto; left: 12px; }
 }
+
+.hud-debug {
+  position: absolute;
+  left: 12px;
+  top: 62px;
+  font: 12px/1.4 ui-monospace, Consolas, monospace;
+  color: var(--muted);
+  background: rgba(0, 0, 0, 0.45);
+  padding: 4px 8px;
+  border-radius: 6px;
+}
+.hud-debug[hidden] { display: none; }

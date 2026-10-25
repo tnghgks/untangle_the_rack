@@ -5,6 +5,8 @@ export type ViewMode = 'front' | 'back' | 'free';
 export interface GameEvents {
   'view:set': ViewMode;
   'view:changed': ViewMode;
+  'cable:plugged': { cableId: string; portId: string };
+  'cable:unplugged': { cableId: string; portId: string };
 }
 
 type Handler<T> = (payload: T) => void;

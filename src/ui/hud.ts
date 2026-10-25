@@ -13,6 +13,8 @@ export interface HudModel {
 
 export interface Hud {
   setModel(m: HudModel): void;
+  /** 개발용 성능 표시 (왼쪽 아래). 처음 호출될 때 나타남 */
+  setDebug(text: string): void;
 }
 
 export function createHud(root: HTMLElement): Hud {
@@ -36,12 +38,14 @@ export function createHud(root: HTMLElement): Hud {
         <button class="on" data-tool="hand">✋ 손</button>
       </div>
     </nav>
+    <div class="hud-debug" hidden></div>
   `;
 
   const field = (k: string) => root.querySelector<HTMLElement>(`[data-k="${k}"]`)!;
   const money = field('money');
   const rate = field('rate');
   const power = field('power');
+  const debug = root.querySelector<HTMLElement>('.hud-debug')!;
 
   const viewButtons = root.querySelectorAll<HTMLButtonElement>('[data-view]');
   viewButtons.forEach((b) => b.addEventListener('click', () => events.emit('view:set', b.dataset.view as ViewMode)));
@@ -54,6 +58,10 @@ export function createHud(root: HTMLElement): Hud {
       money.textContent = `💰 ${formatMoney(m.money)}`;
       rate.textContent = formatRate(m.incomePerSec);
       power.textContent = `⚡ ${m.powerUsed.toLocaleString('ko-KR')} / ${m.powerCap.toLocaleString('ko-KR')}W`;
+    },
+    setDebug(text) {
+      debug.hidden = false;
+      debug.textContent = text;
     },
   };
 }
