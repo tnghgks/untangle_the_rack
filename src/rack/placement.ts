@@ -9,6 +9,7 @@ import { uFromCenterY } from './rack';
 
 // 손에 든 장비: 커서가 가리키는 랙 면(카메라 쪽 앞/뒷면) 높이에 반투명 미리보기를 띄우고
 // 좌클릭으로 끼운다. 들고 있는 동안 좌클릭은 카메라·케이블로 가지 않는다 (우클릭 팬·휠 줌은 그대로).
+// 랙에서 뺀 장비(moving)를 들고 있다가 끼우지 않고 놓으면(Esc·다른 장비 들기) 원래 자리로 돌아간다.
 
 const OK_COLOR = 0x3cff7a;
 const BAD_COLOR = 0xff4a3c;
@@ -20,17 +21,30 @@ export interface PlacementDeps {
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
   room: Room;
-  /** 빈 칸을 클릭함 → 돈을 내고 끼움 */
-  install(defId: DeviceDefId, u: number): void;
+  /** 빈 칸을 클릭함 → 새 장비는 돈을 내고, 뺀 장비(moving)는 그냥 끼움 */
+  install(defId: DeviceDefId, u: number, moving: MovingDevice | null): void;
+  /** 뺀 장비를 끼우지 않고 놓음 → 원래 자리로 */
+  putBack(defId: DeviceDefId, moving: MovingDevice): void;
+}
+
+/** 랙에서 빼서 손에 든 장비 (같은 id로 다시 끼움) */
+export interface MovingDevice {
+  id: string;
+  u: number;
+  on: boolean;
 }
 
 export interface Placement {
   readonly held: DeviceDefId | null;
-  hold(defId: DeviceDefId): void;
+  /** 들고 있는 게 랙에서 뺀 장비면 그 정보 */
+  readonly moving: MovingDevice | null;
+  hold(defId: DeviceDefId, moving?: MovingDevice): void;
   cancel(): void;
+  /** 매 프레임: 휠 줌·시점 이동에도 미리보기가 커서를 따라가게 */
+  refresh(): void;
 }
 
-export function createPlacement({ canvas, camera, controls, room, install }: PlacementDeps): Placement {
+export function createPlacement({ canvas, camera, controls, room, install, putBack }: PlacementDeps): Placement {
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   const plane = new THREE.Plane();
@@ -42,6 +56,7 @@ export function createPlacement({ canvas, camera, controls, room, install }: Pla
   room.rack.add(ghost);
 
   let held: DeviceDefId | null = null;
+  let moving: MovingDevice | null = null;
   let target: { u: number; ok: boolean } | null = null;
   let lastX = 0;
   let lastY = 0;
@@ -68,11 +83,14 @@ export function createPlacement({ canvas, camera, controls, room, install }: Pla
     ghost.visible = true;
   };
 
-  const setHeld = (next: DeviceDefId | null) => {
+  const setHeld = (next: DeviceDefId | null, nextMoving: MovingDevice | null = null) => {
+    const back = held && moving ? { defId: held, moving } : null;
     held = next;
+    moving = nextMoving;
     canvas.style.cursor = next ? 'copy' : '';
     update();
     events.emit('placement:held', next);
+    if (back) putBack(back.defId, back.moving);
   };
 
   // 케이블 드래그·OrbitControls보다 먼저 받아야 하므로 window 캡처 단계에서, 그보다 먼저 등록
@@ -88,9 +106,11 @@ export function createPlacement({ canvas, camera, controls, room, install }: Pla
       if (!target?.ok) return;
       // 빈손 먼저 → 설치 이벤트가 마지막에 와서 설치 안내가 남는다
       const defId = held;
+      const m = moving;
       const { u } = target;
+      moving = null;
       setHeld(null);
-      install(defId, u);
+      install(defId, u, m);
       controls.enabled = true;
     },
     { capture: true },
@@ -101,6 +121,10 @@ export function createPlacement({ canvas, camera, controls, room, install }: Pla
     lastY = e.clientY;
     if (held) update();
   });
+  // 케이블 드래그의 pointermove(캔버스)가 커서를 덮어쓴 뒤에 다시 잡는다
+  window.addEventListener('pointermove', (e) => {
+    if (held && e.target === canvas) canvas.style.cursor = 'copy';
+  });
 
   window.addEventListener('keydown', (e) => {
     if (e.key === 'Escape' && held) setHeld(null);
@@ -110,11 +134,17 @@ export function createPlacement({ canvas, camera, controls, room, install }: Pla
     get held() {
       return held;
     },
-    hold(defId) {
-      setHeld(defId);
+    get moving() {
+      return moving;
+    },
+    hold(defId, m) {
+      setHeld(defId, m ?? null);
     },
     cancel() {
       if (held) setHeld(null);
+    },
+    refresh() {
+      if (held) update();
     },
   };
 }

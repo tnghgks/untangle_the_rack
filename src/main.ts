@@ -5,7 +5,7 @@ import { createCameraRig } from './view/camera';
 import { createCableDrag } from './view/drag';
 import { createStartRoom, restoreRoom } from './view/room';
 import { createPowerButtons } from './view/powerButton';
-import { createPlacement } from './rack/placement';
+import { createPlacement, type MovingDevice } from './rack/placement';
 import { CABLES, DEVICES, type DeviceDefId } from './data/catalog';
 import { events } from './core/events';
 import { createHud } from './ui/hud';
@@ -35,7 +35,13 @@ const saved = stress > 0 || !store ? null : loadSave(store);
 
 const stage = createStage(canvas);
 const rig = createCameraRig(stage.camera, canvas);
-const hud = createHud(hudRoot);
+// 새 게임: 저장을 지우고 다시 읽음. 떠날 때 저장(pagehide)이 지운 걸 되살리지 않게 막아 둠
+let resetting = false;
+const hud = createHud(hudRoot, () => {
+  resetting = true;
+  store?.removeItem(SAVE_KEY);
+  location.reload();
+});
 const room = saved ? restoreRoom(stage.scene, stage.rack, saved) : createStartRoom(stage.scene, stage.rack);
 if (stress > 0) room.addStress(stress);
 const state = createGameState(Date.now(), saved?.money ?? 0);
@@ -54,13 +60,23 @@ const placement = createPlacement({
   camera: stage.camera,
   controls: rig.controls,
   room,
-  // 장비 값은 끼울 때 낸다 (들기 취소 = 환불 필요 없음)
-  install(id, u) {
-    if (!room.slots.canPlace(u, DEVICES[id].sizeU)) return;
+  // 장비 값은 끼울 때 낸다 (들기 취소 = 환불 필요 없음). 뺀 장비는 공짜로 다시 끼움
+  install(id, u, moving) {
+    if (!room.slots.canPlace(u, DEVICES[id].sizeU)) return moving && reinstall(id, moving.u, moving);
+    if (moving) return reinstall(id, u, moving);
     if (!buy(id)) return flashHint('돈이 모자라요');
     room.install(id, u);
   },
+  putBack(id, moving) {
+    reinstall(id, moving.u, moving);
+    flashHint(`${DEVICES[id].name}: 원래 자리(U${moving.u})로 돌려놨어요 · 케이블은 다시 꽂으세요`);
+  },
 });
+/** 뺀 장비를 같은 id로 다시 끼움. 전원 버튼 상태는 뺄 때 그대로 */
+const reinstall = (id: DeviceDefId, u: number, moving: MovingDevice) => {
+  const device = room.install(id, u, moving.id);
+  if (device && moving.on) room.setPower(device, true);
+};
 createPowerButtons(canvas, stage.camera, rig.controls, room);
 createCableDrag({
   canvas,
@@ -69,7 +85,18 @@ createCableDrag({
   world: room.world,
   showPortHint: room.showPortHint,
 });
-const inspector = createInspector({ root: hudRoot, canvas, camera: stage.camera, controls: rig.controls, room });
+const inspector = createInspector({
+  root: hudRoot,
+  canvas,
+  camera: stage.camera,
+  controls: rig.controls,
+  room,
+  onRemove(device) {
+    const moving: MovingDevice = { id: device.id, u: device.u!, on: device.on };
+    if (!room.remove(device)) return;
+    placement.hold(device.def.id, moving);
+  },
+});
 
 let hintTimer = 0;
 const flashHint = (text: string) => {
@@ -77,7 +104,8 @@ const flashHint = (text: string) => {
   clearTimeout(hintTimer);
   hintTimer = window.setTimeout(() => hud.setHint(placement.held ? holdHint(placement.held) : null), 3500);
 };
-const holdHint = (id: DeviceDefId) => `${DEVICES[id].name} 들고 있음 · 랙의 빈 칸을 클릭해 끼우기 · Esc 취소`;
+const holdHint = (id: DeviceDefId) =>
+  `${DEVICES[id].name} 들고 있음 · 랙의 빈 칸을 클릭해 끼우기 · Esc ${placement.moving ? '원래 자리로' : '취소'}`;
 events.on('placement:held', (id) => {
   clearTimeout(hintTimer);
   hud.setHint(id ? holdHint(id as DeviceDefId) : null);
@@ -129,6 +157,7 @@ events.on('cable:plugged', advance);
 events.on('cable:unplugged', advance);
 events.on('device:power', advance);
 events.on('device:installed', advance);
+events.on('device:removed', advance);
 events.on('pdu:reset', advance);
 events.on('pdu:tripped', () => flashHint('PDU 과부하 · 차단기가 내려갔어요 · 부하를 줄이고 PDU를 클릭해 리셋하세요'));
 // 렌더 루프가 멈추는 백그라운드 탭에서도 돌도록 (브라우저가 1초 이상으로 늦춰도 시간 차이로 계산)
@@ -140,9 +169,12 @@ let lastRealMs = Date.now();
 
 // 저장: 10초마다 + 탭을 숨기거나 떠날 때. 측정 모드(?stress)는 저장하지 않음
 const save = () => {
-  if (stress > 0 || !store) return;
+  if (stress > 0 || !store || resetting) return;
   advance();
   const data: SaveData = { v: SAVE_VERSION, money: state.money, bought: { ...state.bought }, ...room.snapshot() };
+  // 손에 든 뺀 장비는 원래 자리에 있는 것으로 저장 (그 칸은 다른 장비가 못 씀 — 한 번에 하나만 듦)
+  const m = placement.moving;
+  if (m && placement.held) data.devices.push({ id: m.id, defId: placement.held, u: m.u, side: null, on: m.on, tripped: false });
   writeSave(store, data);
 };
 window.setInterval(save, 10_000);
@@ -150,6 +182,15 @@ document.addEventListener('visibilitychange', () => {
   if (document.visibilityState === 'hidden') save();
 });
 window.addEventListener('pagehide', save);
+
+/** 상단 바 경고: 차단된 PDU > 부하 85% 이상인 PDU (전체 합만 보면 한 PDU가 가득 찬 걸 놓침) */
+const PDU_WARN_RATIO = 0.85;
+const pduWarn = (): string | null => {
+  const pdus = room.devices.filter((d) => d.power.role === 'pdu');
+  if (pdus.some((d) => d.power.tripped)) return '⚠ PDU 차단됨';
+  const worst = Math.max(0, ...pdus.map((d) => d.power.load / d.power.capacity));
+  return worst >= PDU_WARN_RATIO ? `⚠ PDU 부하 ${Math.round(worst * 100)}%` : null;
+};
 
 const perf = { physMs: 0, frames: 0, fps: 0, since: performance.now() };
 
@@ -162,9 +203,10 @@ startLoop({
   render() {
     const now = Date.now();
     rig.update((now - lastRealMs) / 1000);
+    placement.refresh();
     lastRealMs = now;
     advance();
-    hud.setModel({ money: state.money, ...room.summary });
+    hud.setModel({ money: state.money, ...room.summary, pduWarn: pduWarn() });
     inspector.update();
     room.sync(performance.now() / 1000);
     stage.renderer.render(stage.scene, stage.camera);

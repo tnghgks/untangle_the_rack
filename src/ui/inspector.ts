@@ -25,6 +25,8 @@ export interface InspectorDeps {
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
   room: Room;
+  /** 빼기 버튼: 랙에서 빼서 손에 듦 */
+  onRemove(device: Device): void;
 }
 
 export interface Inspector {
@@ -33,7 +35,7 @@ export interface Inspector {
   close(): void;
 }
 
-export function createInspector({ root, canvas, camera, controls, room }: InspectorDeps): Inspector {
+export function createInspector({ root, canvas, camera, controls, room, onRemove }: InspectorDeps): Inspector {
   const card = document.createElement('div');
   card.className = 'hud-panel hud-inspector';
   card.hidden = true;
@@ -52,6 +54,7 @@ export function createInspector({ root, canvas, camera, controls, room }: Inspec
     if (t.dataset.act === 'close') close();
     else if (t.dataset.act === 'power') room.setPower(device, !device.on);
     else if (t.dataset.act === 'reset') room.resetBreaker(device);
+    else if (t.dataset.act === 'remove') onRemove(device);
   });
 
   const close = () => {
@@ -119,7 +122,7 @@ export function createInspector({ root, canvas, camera, controls, room }: Inspec
       ${p.role === 'pdu' && p.tripped ? '<div class="help">장비를 끄거나 전원선을 다른 PDU로 옮긴 뒤 리셋하세요</div>' : ''}
       ${help && p.role !== 'pdu' ? `<div class="help">${help}</div>` : ''}
       ${lines.map((l) => `<div class="line">${l}</div>`).join('')}
-      ${p.role !== 'pdu' ? `<button class="act" data-act="power">${d.on ? '끄기' : '켜기'}</button>` : ''}
+      ${p.role !== 'pdu' ? `<div class="acts"><button class="act" data-act="power">${d.on ? '끄기' : '켜기'}</button><button class="act" data-act="remove" title="랙에서 빼서 다른 칸에 끼움 (케이블은 뽑힘)">빼기</button></div>` : ''}
       ${p.role === 'pdu' && p.tripped ? '<button class="act" data-act="reset">차단기 리셋</button>' : ''}
     `;
   };

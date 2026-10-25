@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { createCable, CableWorld, type Cable, type Port, type PortKind } from '../cable/cable';
 import { CableMesh } from '../cable/cableMesh';
-import type { Vec3 } from '../cable/collide';
-import { plug, type PortHit } from '../cable/plug';
+import type { Aabb, Vec3 } from '../cable/collide';
+import { plug, unplug, type PortHit } from '../cable/plug';
 import { events } from '../core/events';
 import { createRng } from '../core/rng';
 import type { DeviceDefId } from '../data/catalog';
@@ -34,6 +34,8 @@ export class Room {
   readonly devices: Device[] = [];
   readonly meshes: CableMesh[] = [];
   private readonly sockets = new Map<Port, Socket>();
+  /** 장비마다 월드에 더한 충돌 상자 (빼기에서 다시 걷어냄) */
+  private readonly boxes = new Map<Device, Aabb[]>();
   private hinted: Socket | null = null;
   private serial = 0;
   private spawned = 0;
@@ -80,9 +82,39 @@ export class Room {
       this.sockets.set(s.port, s);
       this.world.ports.push(s.port);
     }
-    this.world.colliders.push(...collectColliders(device.group));
+    const boxes = collectColliders(device.group);
+    this.boxes.set(device, boxes);
+    this.world.colliders.push(...boxes);
     // 새 상자에 잠든 케이블이 박힌 채 남지 않게 모두 깨움
     for (const c of this.world.cables) c.rope.wake();
+  }
+
+  /** 랙 장비를 뺌: 꽂힌 케이블을 뽑고 포트·충돌 상자·메시를 걷어냄. 옆면 PDU는 못 뺌 */
+  remove(device: Device): boolean {
+    const i = this.devices.indexOf(device);
+    if (i < 0 || device.u === null) return false;
+    for (const port of device.ports) {
+      if (port.plugged) unplug(port.plugged.cable, port.plugged.end);
+      if (this.hinted?.port === port) this.hinted = null;
+      this.sockets.delete(port);
+    }
+    const ports = new Set(device.ports);
+    const boxes = new Set(this.boxes.get(device));
+    this.boxes.delete(device);
+    removeWhere(this.world.ports, (p) => ports.has(p));
+    removeWhere(this.world.colliders, (b) => boxes.has(b));
+    this.devices.splice(i, 1);
+    this.slots.remove(device.id);
+    this.rack.remove(device.group);
+    device.group.traverse((o) => {
+      if (!(o instanceof THREE.Mesh)) return;
+      o.geometry.dispose();
+      (o.material as THREE.Material).dispose();
+    });
+    // 받치던 상자가 사라졌으니 걸쳐 있던 케이블이 떨어지게
+    for (const c of this.world.cables) c.rope.wake();
+    events.emit('device:removed', { deviceId: device.id });
+    return true;
   }
 
   device(id: string): Device | undefined {
@@ -243,6 +275,12 @@ export class Room {
       else e.setHex(0x000000);
     }
   }
+}
+
+function removeWhere<T>(arr: T[], drop: (x: T) => boolean): void {
+  let k = 0;
+  for (const x of arr) if (!drop(x)) arr[k++] = x;
+  arr.length = k;
 }
 
 function emissive(s: Socket): THREE.Color {

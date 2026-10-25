@@ -9,6 +9,8 @@ export interface HudModel {
   incomePerSec: number;
   powerUsed: number;
   powerCap: number;
+  /** 가장 위험한 PDU 경고 (차단·과부하 직전). null = 괜찮음 */
+  pduWarn: string | null;
 }
 
 export interface Hud {
@@ -21,12 +23,15 @@ export interface Hud {
   setDebug(text: string): void;
 }
 
-export function createHud(root: HTMLElement): Hud {
+/** 새 게임 버튼 → 확인 뒤 onNewGame */
+export function createHud(root: HTMLElement, onNewGame: () => void): Hud {
   root.innerHTML = `
     <header class="hud-panel hud-top">
       <span class="stat money" data-k="money"></span>
       <span class="stat rate" data-k="rate"></span>
       <span class="stat power" data-k="power"></span>
+      <span class="stat warn" data-k="warn" hidden></span>
+      <button class="new-game" type="button" title="저장을 지우고 처음부터">새 게임</button>
     </header>
     <aside class="hud-panel hud-shop"></aside>
     <div class="hud-hint" hidden></div>
@@ -47,6 +52,10 @@ export function createHud(root: HTMLElement): Hud {
   const money = field('money');
   const rate = field('rate');
   const power = field('power');
+  const warn = field('warn');
+  root.querySelector('.new-game')!.addEventListener('click', () => {
+    if (window.confirm('저장을 지우고 처음부터 시작할까요? 되돌릴 수 없어요.')) onNewGame();
+  });
   const debug = root.querySelector<HTMLElement>('.hud-debug')!;
   const hint = root.querySelector<HTMLElement>('.hud-hint')!;
 
@@ -66,6 +75,8 @@ export function createHud(root: HTMLElement): Hud {
       money.textContent = `💰 ${formatMoney(m.money)}`;
       rate.textContent = formatRate(m.incomePerSec);
       power.textContent = `⚡ ${m.powerUsed.toLocaleString('ko-KR')} / ${m.powerCap.toLocaleString('ko-KR')}W`;
+      warn.hidden = m.pduWarn === null;
+      warn.textContent = m.pduWarn ?? '';
     },
     setDebug(text) {
       debug.hidden = false;

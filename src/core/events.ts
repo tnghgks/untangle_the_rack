@@ -8,6 +8,8 @@ export interface GameEvents {
   'cable:plugged': { cableId: string; portId: string };
   'cable:unplugged': { cableId: string; portId: string };
   'device:installed': { deviceId: string };
+  /** 랙에서 뺌 (손에 들림 — 다시 끼우면 같은 id로 device:installed) */
+  'device:removed': { deviceId: string };
   'device:power': { deviceId: string; on: boolean };
   /** PDU 과부하로 차단기가 내려감 / 다시 올림 */
   'pdu:tripped': { deviceId: string };

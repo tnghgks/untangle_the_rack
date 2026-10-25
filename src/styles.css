@@ -55,6 +55,20 @@ html, body {
 .hud-top .money { font-weight: 700; font-size: 1.15rem; }
 .hud-top .rate { color: var(--accent); align-self: center; }
 .hud-top .power { color: var(--muted); align-self: center; }
+.hud-top .warn { color: #ffc23c; align-self: center; font-weight: 600; }
+.hud-top .warn[hidden] { display: none; }
+.hud-top .new-game {
+  align-self: center;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--muted);
+  background: none;
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+}
+.hud-top .new-game:hover { color: var(--text); background: var(--btn-bg); }
 
 .hud-shop {
   top: 12px;
@@ -180,3 +194,4 @@ html, body {
   cursor: pointer;
 }
 .hud-inspector .act:hover { background: var(--btn-on); }
+.hud-inspector .acts { display: flex; gap: 6px; }
