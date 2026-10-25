@@ -79,6 +79,17 @@ describe('save', () => {
     expect(back.freePduSide()).toBeNull();
   });
 
+  it('줄인 길이 유지, 길이 없는 옛 저장은 기본 2m', () => {
+    const room = startRoom();
+    room.world.cables[2].rope.setLength(0.9);
+    const { data, back } = roundTrip(room);
+    expect(back.world.cables[2].rope.length).toBeCloseTo(0.9, 3);
+    expect(back.world.cables[0].rope.length).toBeCloseTo(2, 3);
+    const old = { ...data, cables: data.cables.map(({ length: _, ...c }) => c) };
+    const fromOld = restoreRoom(new THREE.Scene(), new THREE.Group(), parseSave(JSON.stringify(old))!);
+    expect(fromOld.world.cables[2].rope.length).toBeCloseTo(2, 3);
+  });
+
   it('깨진 저장은 무시', () => {
     expect(parseSave(null)).toBeNull();
     expect(parseSave('{oops')).toBeNull();

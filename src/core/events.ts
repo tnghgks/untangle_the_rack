@@ -1,10 +1,13 @@
 // 타입 있는 이벤트 버스. 이벤트 이름과 페이로드는 GameEvents 한 곳에서 정의한다.
 
 export type ViewMode = 'front' | 'back' | 'free';
+export type ToolId = 'hand' | 'shorten';
 
 export interface GameEvents {
   'view:set': ViewMode;
   'view:changed': ViewMode;
+  /** 하단 툴바 도구 (hud가 보냄, main이 현재 도구를 들고 있음) */
+  'tool:set': ToolId;
   'cable:plugged': { cableId: string; portId: string };
   'cable:unplugged': { cableId: string; portId: string };
   'device:installed': { deviceId: string };

@@ -1,4 +1,4 @@
-import { events, type ViewMode } from '../core/events';
+import { events, type ToolId, type ViewMode } from '../core/events';
 import { LED_COLOR, type LedState } from '../rack/device';
 import { formatMoney, formatRate } from './format';
 
@@ -32,6 +32,7 @@ const LED_HELP: [LedState, string][] = [
   ['dark', '꺼짐 · 배선 덜 됨'],
 ];
 const hex = (c: number) => `#${c.toString(16).padStart(6, '0')}`;
+const TOOL_KEYS: Record<string, ToolId> = { '1': 'hand', '2': 'shorten' };
 
 /** 규칙 요약 (상단 바 가이드 버튼으로 열고 닫음) */
 const GUIDE_HTML = `
@@ -55,6 +56,7 @@ const GUIDE_HTML = `
   <ul>
     <li>가운데 버튼 드래그: 회전 · 오른쪽 또는 Shift+왼쪽 드래그: 이동 · 휠: 확대</li>
     <li>케이블 끄는 중 휠: 앞뒤로 밀기</li>
+    <li>✂ 줄이기 (2): 케이블을 누른 채 위로 끌면 줄고 아래로 끌면 늘어남 · 남는 길이를 걷으면 뒷면이 깔끔해져요 · ✋ 손 (1)로 돌아가기</li>
     <li>장비 클릭: 정보 카드 (켜기·끄기·빼기) · Esc: 취소</li>
   </ul>
 `;
@@ -80,7 +82,8 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
         <button data-view="free" class="on">자유</button>
       </div>
       <div class="group" role="group" aria-label="도구">
-        <button class="on" data-tool="hand">✋ 손</button>
+        <button class="on" data-tool="hand" title="케이블 잡아 끌기·꽂기 (1)">✋ 손</button>
+        <button data-tool="shorten" title="케이블을 위로 끌면 줄고 아래로 끌면 늘어남 (2)">✂ 줄이기</button>
       </div>
     </nav>
     <div class="hud-debug" hidden></div>
@@ -111,6 +114,17 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
   viewButtons.forEach((b) => b.addEventListener('click', () => events.emit('view:set', b.dataset.view as ViewMode)));
   events.on('view:changed', (mode) => {
     viewButtons.forEach((b) => b.classList.toggle('on', b.dataset.view === mode));
+  });
+
+  const toolButtons = root.querySelectorAll<HTMLButtonElement>('[data-tool]');
+  toolButtons.forEach((b) => b.addEventListener('click', () => events.emit('tool:set', b.dataset.tool as ToolId)));
+  events.on('tool:set', (tool) => {
+    toolButtons.forEach((b) => b.classList.toggle('on', b.dataset.tool === tool));
+  });
+  window.addEventListener('keydown', (e) => {
+    if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+    const tool = TOOL_KEYS[e.key];
+    if (tool) events.emit('tool:set', tool);
   });
 
   return {

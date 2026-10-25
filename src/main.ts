@@ -3,12 +3,13 @@ import { startLoop } from './core/loop';
 import { createStage } from './view/scene';
 import { createCameraRig } from './view/camera';
 import { createCableDrag } from './view/drag';
+import { createShortenTool } from './view/shorten';
 import { createStartRoom, restoreRoom } from './view/room';
 import { createPowerButtons } from './view/powerButton';
 import { createHover } from './view/hover';
 import { createPlacement, type MovingDevice } from './rack/placement';
 import { CABLES, DEVICES, START_MONEY, type DeviceDefId } from './data/catalog';
-import { events } from './core/events';
+import { events, type ToolId } from './core/events';
 import { createHud } from './ui/hud';
 import { createShop } from './ui/shop';
 import { createInspector } from './ui/inspector';
@@ -55,7 +56,7 @@ const buy = (id: DeviceDefId): boolean => {
   return true;
 };
 
-// 입력 우선순위는 등록 순서: 장비 들기 → 전원 버튼 → 케이블 드래그 → 장비 정보 카드 → OrbitControls
+// 입력 우선순위는 등록 순서: 장비 들기 → 전원 버튼 → 케이블 드래그(손)·줄이기 → 장비 정보 카드 → OrbitControls
 const placement = createPlacement({
   canvas,
   camera: stage.camera,
@@ -82,12 +83,29 @@ const reinstall = (id: DeviceDefId, u: number, moving: MovingDevice) => {
   flashHint(`${DEVICES[id].name}: U${u}에 다시 끼움 · 뒷면에서 케이블을 다시 꽂으세요${moving.on ? '' : ' · 앞면 전원 버튼을 누르세요'}`);
 };
 createPowerButtons(canvas, stage.camera, rig.controls, room);
+let tool: ToolId = 'hand';
+events.on('tool:set', (t) => {
+  tool = t;
+  if (t === 'shorten') flashHint('✂ 줄이기: 케이블을 누른 채 위로 끌면 줄고 아래로 끌면 늘어나요 · 1 손으로 돌아가기');
+});
 createCableDrag({
   canvas,
   camera: stage.camera,
   controls: rig.controls,
   world: room.world,
+  enabled: () => tool === 'hand',
   showPortHint: room.showPortHint,
+});
+const shorten = createShortenTool({
+  canvas,
+  camera: stage.camera,
+  controls: rig.controls,
+  world: room.world,
+  active: () => tool === 'shorten',
+  show(text) {
+    clearTimeout(hintTimer);
+    hud.setHint(text ?? (placement.held ? holdHint(placement.held) : null));
+  },
 });
 const inspector = createInspector({
   root: hudRoot,
@@ -101,7 +119,7 @@ const inspector = createInspector({
     placement.hold(device.def.id, moving);
   },
 });
-createHover({ canvas, camera: stage.camera, room, busy: () => placement.held !== null });
+createHover({ canvas, camera: stage.camera, room, busy: () => placement.held !== null, tool: () => tool });
 
 let hintTimer = 0;
 const flashHint = (text: string) => {
@@ -202,6 +220,7 @@ const perf = { physMs: 0, frames: 0, fps: 0, since: performance.now() };
 startLoop({
   update(dt) {
     const t0 = performance.now();
+    shorten.update(dt);
     room.world.step(dt);
     perf.physMs += (performance.now() - t0 - perf.physMs) * 0.05;
   },

@@ -207,6 +207,7 @@ export class Room {
         id: c.id, kind: c.kind, color: c.color,
         ends: [c.ends[0]?.id ?? null, c.ends[1]?.id ?? null],
         nodes: Array.from(c.rope.pos, round3),
+        length: round3(c.rope.length),
       }));
     return { serial: this.serial, spawned: this.spawned, devices, cables };
   }
@@ -223,6 +224,8 @@ export class Room {
     for (const saved of data.cables) {
       const c = this.addCable(saved.kind, saved);
       const { rope } = c;
+      // 꽂기(plug)가 끝 옆 마디를 간격만큼 띄우므로 길이를 먼저
+      if (saved.length !== undefined) rope.setLength(saved.length);
       if (saved.nodes.length === rope.pos.length) {
         rope.pos.set(saved.nodes);
         rope.prev.set(saved.nodes);

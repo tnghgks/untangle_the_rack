@@ -16,6 +16,8 @@ export interface CableDragDeps {
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
   world: CableWorld;
+  /** 손 도구일 때만 잡는다 (줄이기 도구는 shorten.ts) */
+  enabled(): boolean;
   /** 끄는 커넥터 근처의 포트 표시 (null = 끔) */
   showPortHint(hit: PortHit | null): void;
 }
@@ -27,7 +29,7 @@ interface Drag {
   hit: PortHit | null;
 }
 
-export function createCableDrag({ canvas, camera, controls, world, showPortHint }: CableDragDeps): void {
+export function createCableDrag({ canvas, camera, controls, world, enabled, showPortHint }: CableDragDeps): void {
   const raycaster = new THREE.Raycaster();
   const plane = new THREE.Plane();
   const ndc = new THREE.Vector2();
@@ -89,7 +91,7 @@ export function createCableDrag({ canvas, camera, controls, world, showPortHint 
   window.addEventListener(
     'pointerdown',
     (e) => {
-      if (e.target !== canvas || e.button !== 0 || drag) return;
+      if (e.target !== canvas || e.button !== 0 || drag || !enabled()) return;
       const pick = pickCable(world.cables, camera, e.clientX, e.clientY, canvas.getBoundingClientRect());
       if (!pick) return;
       controls.enabled = false;

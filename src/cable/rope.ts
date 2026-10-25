@@ -44,6 +44,8 @@ const STATIC_EPS = 4e-4;
 export class Rope {
   readonly cfg: RopeConfig;
   readonly n: number;
+  /** 처음 지급된 길이 — 줄이기 도구로 다시 늘릴 수 있는 상한 */
+  readonly maxLength: number;
   readonly pos: Float32Array;
   readonly prev: Float32Array;
   /** 노드가 이번 스텝에 무언가에 닿았는지 */
@@ -51,6 +53,8 @@ export class Rope {
   /** 모양이 바뀔 때마다 증가 — 렌더러가 갱신 여부를 판단 */
   version = 0;
   sleeping = false;
+  /** 마찰 끔 — 줄이기 도구로 감는 동안 케이블이 상자·바닥 위를 미끄러지게 (팽팽함 판정이 마찰에 속지 않게) */
+  slip = false;
 
   private readonly start: Float32Array;
   private readonly sleepRef: Float32Array;
@@ -65,6 +69,7 @@ export class Rope {
   constructor(length: number, cfg: Partial<RopeConfig> = {}) {
     this.cfg = { ...ROPE_DEFAULTS, ...cfg };
     this.n = Math.max(2, Math.round(length / this.cfg.segLen) + 1);
+    this.maxLength = this.length;
     this.pos = new Float32Array(this.n * 3);
     this.prev = new Float32Array(this.n * 3);
     this.start = new Float32Array(this.n * 3);
@@ -76,6 +81,12 @@ export class Rope {
 
   get length(): number {
     return (this.n - 1) * this.cfg.segLen;
+  }
+
+  /** 길이 바꾸기 (줄이기 도구). 마디 수는 그대로 두고 간격만 바꾼다 → 렌더·저장 배열 크기 불변 */
+  setLength(length: number): void {
+    this.cfg.segLen = Math.min(length, this.maxLength) / (this.n - 1);
+    this.wake();
   }
 
   get grabbed(): number {
@@ -266,7 +277,7 @@ export class Rope {
     const f = cfg.friction;
     const st = this.start;
     for (let i = 0; i < n; i++) {
-      if (!this.contact[i] || pinned[i] || i === g) continue;
+      if (this.slip || !this.contact[i] || pinned[i] || i === g) continue;
       const o = i * 3;
       const dx = pos[o] - st[o];
       const dy = pos[o + 1] - st[o + 1];

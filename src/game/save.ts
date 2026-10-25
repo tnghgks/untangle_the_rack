@@ -27,6 +27,8 @@ export interface SavedCable {
   ends: [string | null, string | null];
   /** 마디 좌표 xyz 이어 붙임, 소수 3자리 (mm) */
   nodes: number[];
+  /** 줄이기 도구로 바꾼 길이 (m). 없으면 기본 길이 (P4 이전 저장) */
+  length?: number;
 }
 
 export interface SaveData {
@@ -71,7 +73,8 @@ function isSave(d: unknown): d is SaveData {
   const cabOk = s.cables.every((x: SavedCable) =>
     typeof x?.id === 'string' && (x.kind === 'lan' || x.kind === 'power') && num(x.color) &&
     Array.isArray(x.ends) && x.ends.length === 2 && x.ends.every(portId) &&
-    Array.isArray(x.nodes) && x.nodes.length % 3 === 0 && x.nodes.every(num));
+    Array.isArray(x.nodes) && x.nodes.length % 3 === 0 && x.nodes.every(num) &&
+    (x.length === undefined || (num(x.length) && x.length > 0)));
   return devOk && cabOk;
 }
 
