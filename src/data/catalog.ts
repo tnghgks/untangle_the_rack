@@ -6,7 +6,8 @@
 
 import type { PortKind } from '../cable/cable';
 
-export type DeviceDefId = 'server-entry' | 'server-web' | 'server-storage' | 'server-gpu' | 'switch-8' | 'switch-24' | 'pdu';
+export type DeviceDefId =
+  | 'server-entry' | 'server-web' | 'server-storage' | 'server-gpu' | 'switch-8' | 'switch-24' | 'pdu' | 'cable-manager';
 export type CableDefId = 'cable-lan' | 'cable-power';
 
 export interface PortDef {
@@ -28,6 +29,8 @@ export interface DeviceDef {
   capacity?: number;
   ports: PortDef[];
   color: number;
+  /** 케이블 매니저: 뒷면 고리 x 자리 (cable/manager.ts). 전기·포트 없음 */
+  rings?: number[];
 }
 
 export interface CableDef {
@@ -81,6 +84,11 @@ export const DEVICES: Record<DeviceDefId, DeviceDef> = {
     id: 'pdu', name: 'PDU', sizeU: 0, price: 1500, incomePerSec: 0, watts: 0, capacity: 3000,
     ports: [], color: 0x1a1c20,
   },
+  // 가격 100원 (10-26 사용자 확정). 1U를 차지하는 대신 랙 가운데에도 선을 걸 수 있음
+  'cable-manager': {
+    id: 'cable-manager', name: '케이블 매니저', sizeU: 1, price: 100, incomePerSec: 0, watts: 0,
+    ports: [], color: 0x24272c, rings: [-0.2, -0.1, 0, 0.1, 0.2],
+  },
 };
 
 /** 같은 장비를 살 때마다 가격 배수 (방치형 표준 1.15보다 가파르게 — 인플레이션 억제). 케이블은 고정가 */
@@ -93,6 +101,6 @@ export const CABLES: Record<CableDefId, CableDef> = {
 };
 
 /** 상점에 보이는 순서 */
-export const SHOP_DEVICES: DeviceDefId[] = ['server-entry', 'server-web', 'server-storage', 'server-gpu', 'switch-24', 'pdu'];
+export const SHOP_DEVICES: DeviceDefId[] = ['server-entry', 'server-web', 'server-storage', 'server-gpu', 'switch-24', 'pdu', 'cable-manager'];
 export const SHOP_CABLES: CableDefId[] = ['cable-lan', 'cable-power'];
 

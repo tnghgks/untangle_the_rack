@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Port, PortKind } from '../cable/cable';
+import { RING_OUT, RING_R, ringsOf } from '../cable/manager';
 import type { Aabb, Vec3 } from '../cable/collide';
 import { DEVICES, type DeviceDef, type DeviceDefId } from '../data/catalog';
 import { RACK, RACK_HEIGHT, U, uBottomY } from '../data/units';
@@ -108,6 +109,13 @@ export function createRackDevice(id: string, defId: DeviceDefId, u: number): { d
   body.userData.deviceId = id;
   g.add(body);
 
+  // 케이블 매니저: 전원 버튼·LED·포트 없이 뒷면 고리만
+  if (def.rings) {
+    addRings(g, id, u, def.rings);
+    const power = powerOf(id, def, 'passive', []);
+    return { device: { id, def, u, side: null, on: false, ports: [], group: g, body, button: null, led: null, backLed: null, power }, sockets: [] };
+  }
+
   // 앞면 전원 버튼 (왼쪽) + LED (오른쪽). 버튼은 몸체 밖으로 살짝 튀어나와 충돌 상자에 안 들어감
   const frontZ = DEVICE_DEPTH / 2;
   const button = new THREE.Mesh(
@@ -141,6 +149,25 @@ export function createRackDevice(id: string, defId: DeviceDefId, u: number): { d
   const power = powerOf(id, def, isSwitch ? 'switch' : 'server', ports);
   const device: Device = { id, def, u, side: null, on: false, ports, group: g, body, button, led, backLed, power };
   return { device, sockets };
+}
+
+const RING_TUBE = 0.003;
+
+/** 매니저 뒷면 고리: x축을 감싸는 고리(가로로 지나는 선이 통과) + 뒷면에서 나온 짧은 받침. 충돌 상자 아님 */
+function addRings(g: THREE.Group, id: string, u: number, xs: readonly number[]): void {
+  const ringGeo = new THREE.TorusGeometry(RING_R, RING_TUBE, 8, 24);
+  const stemGeo = new THREE.BoxGeometry(0.006, 0.004, RING_OUT);
+  for (const ring of ringsOf(id, u, xs)) {
+    const [x, y, z] = ring.pos;
+    const mesh = new THREE.Mesh(ringGeo, new THREE.MeshStandardMaterial({ color: 0x8a929c, metalness: 0.7, roughness: 0.35 }));
+    mesh.rotation.y = Math.PI / 2;
+    mesh.position.set(x, y, z);
+    mesh.userData.ringId = ring.id;
+    g.add(mesh);
+    const stem = new THREE.Mesh(stemGeo, new THREE.MeshStandardMaterial({ color: 0x5a6068, metalness: 0.6, roughness: 0.5 }));
+    stem.position.set(x, y - RING_R, z + RING_OUT / 2);
+    g.add(stem);
+  }
 }
 
 function powerOf(id: string, def: DeviceDef, role: PowerDevice['role'], ports: Port[]): PowerDevice {

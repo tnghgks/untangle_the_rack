@@ -35,8 +35,8 @@ export interface VelcroToolDeps {
 }
 
 export interface VelcroTool {
-  /** drag.ts snap: 끄는 중 커서가 기둥 위면 손이 붙을 자리 */
-  snap(ray: THREE.Ray): Vec3 | null;
+  /** drag.ts snap: 끄는 중 커서가 기둥 위면 손이 붙을 자리. null = 다른 것(매니저 고리)이 먼저 붙음 */
+  snap(ray: THREE.Ray | null): Vec3 | null;
   /** 띠 메시를 묶음 목록에 맞춤 + 미리보기·커서 (매 프레임) */
   sync(): void;
 }
@@ -156,7 +156,7 @@ export function createVelcroTool({ canvas, camera, scene, world, drag, active, f
 
   return {
     snap(ray) {
-      holding = active() ? rayToPost(ray) : null;
+      holding = active() && ray ? rayToPost(ray) : null;
       if (!holding) return null;
       if (!hinted) {
         hinted = true;

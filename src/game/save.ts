@@ -27,8 +27,8 @@ export interface SavedCable {
   ends: [string | null, string | null];
   /** 마디 좌표 xyz 이어 붙임, 소수 3자리 (mm) */
   nodes: number[];
-  /** 벨크로: 묶은 마디와 고정 자리. 없으면 안 묶음 (P4 이전 저장) */
-  ties?: { node: number; pos: [number, number, number] }[];
+  /** 벨크로·케이블 매니저: 묶은 마디와 고정 자리, 고리에 건 것이면 고리 id. 없으면 안 묶음 (P4 이전 저장) */
+  ties?: { node: number; pos: [number, number, number]; hook?: string }[];
   /** 상점에서 낸 값 (판매 환급용). 없으면 0 — 시작 배선·옛 저장 */
   paid?: number;
 }
@@ -63,8 +63,9 @@ export function parseSave(text: string | null): SaveData | null {
 const num = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
 const portId = (x: unknown) => x === null || typeof x === 'string';
 const tieOk = (t: unknown) => {
-  const r = t as { node?: unknown; pos?: unknown };
-  return typeof t === 'object' && t !== null && Number.isInteger(r.node) && Array.isArray(r.pos) && r.pos.length === 3 && r.pos.every(num);
+  const r = t as { node?: unknown; pos?: unknown; hook?: unknown };
+  return typeof t === 'object' && t !== null && Number.isInteger(r.node) && Array.isArray(r.pos) && r.pos.length === 3 && r.pos.every(num) &&
+    (r.hook === undefined || typeof r.hook === 'string');
 };
 
 function isSave(d: unknown): d is SaveData {

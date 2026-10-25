@@ -63,7 +63,7 @@ export function createShop(panel: HTMLElement, deps: ShopDeps): Shop {
       const blocked = deps.blockedReason(def);
       b.classList.toggle('held', held === def.id);
       const size = def.sizeU > 0 ? `${def.sizeU}U` : '옆면';
-      const stats = def.incomePerSec > 0 ? `+${def.incomePerSec}원/초 · ${def.watts}W` : def.capacity ? `+${def.capacity.toLocaleString('ko-KR')}W` : `${def.watts}W`;
+      const stats = def.rings ? `고리 ${def.rings.length}개 · 선 정리` : def.incomePerSec > 0 ? `+${def.incomePerSec}원/초 · ${def.watts}W` : def.capacity ? `+${def.capacity.toLocaleString('ko-KR')}W` : `${def.watts}W`;
       draw(
         b,
         `<span class="name">${def.name} <small>${size}</small></span>

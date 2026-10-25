@@ -14,6 +14,8 @@ import type { Vec3 } from './collide';
 export interface Tie {
   node: number;
   pos: Vec3;
+  /** 케이블 매니저 고리에 건 것이면 고리 id (manager.ts). 없으면 기둥 띠 */
+  hook?: string;
 }
 
 /** 뒷면 기둥: x 부호(-1 왼쪽, 1 오른쪽) */
@@ -84,7 +86,7 @@ export function captureNode(cable: Cable, post: Post, y: number): { node: number
   return { node: best, at: [cx + dx * r, y, POST_Z + dz * r] };
 }
 
-function canReach(cable: Cable, i: number, at: Vec3): boolean {
+export function canReach(cable: Cable, i: number, at: Vec3): boolean {
   const seg = cable.rope.cfg.segLen;
   return anchors(cable).every((a) =>
     Math.hypot(at[0] - a.pos[0], at[1] - a.pos[1], at[2] - a.pos[2]) * REACH_SLACK <= Math.abs(i - a.node) * seg);
@@ -97,7 +99,7 @@ export function strap(cables: readonly Cable[], post: Post, y: number): { tied: 
   const key = strapKey(post, y);
   for (const cable of cables) {
     // 이미 이 띠에 묶인 선은 그대로 (옆 마디를 또 묶지 않게)
-    if (cable.ties.some((t) => tieKey(t) === key)) continue;
+    if (cable.ties.some((t) => !t.hook && tieKey(t) === key)) continue;
     const hit = captureNode(cable, post, y);
     if (!hit) continue;
     if (!canReach(cable, hit.node, hit.at)) {
@@ -118,6 +120,7 @@ export function strapsOf(cables: readonly Cable[]): Strap[] {
   const map = new Map<string, Strap>();
   for (const cable of cables) {
     for (const tie of cable.ties) {
+      if (tie.hook) continue;
       const key = tieKey(tie);
       let s = map.get(key);
       if (!s) map.set(key, (s = { key, post: tie.pos[0] < 0 ? -1 : 1, y: tie.pos[1], ties: [] }));
@@ -158,6 +161,6 @@ export function restoreTie(cable: Cable, t: Tie): boolean {
   const { rope } = cable;
   if (t.node < 2 || t.node > rope.n - 3 || rope.isPinned(t.node)) return false;
   rope.pin(t.node, t.pos[0], t.pos[1], t.pos[2]);
-  cable.ties.push({ node: t.node, pos: [t.pos[0], t.pos[1], t.pos[2]] });
+  cable.ties.push({ node: t.node, pos: [t.pos[0], t.pos[1], t.pos[2]], ...(t.hook ? { hook: t.hook } : {}) });
   return true;
 }

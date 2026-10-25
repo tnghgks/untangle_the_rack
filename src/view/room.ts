@@ -3,6 +3,7 @@ import { createCable, CableWorld, type Cable, type Port, type PortKind } from '.
 import { CableMesh } from '../cable/cableMesh';
 import type { Aabb, Vec3 } from '../cable/collide';
 import { plug, unplug, type PortHit } from '../cable/plug';
+import { deviceOfHook, releaseDevice } from '../cable/manager';
 import { restoreTie, untie } from '../cable/velcro';
 import { events } from '../core/events';
 import { createRng } from '../core/rng';
@@ -102,6 +103,7 @@ export class Room {
   remove(device: Device, allowPdu = false): boolean {
     const i = this.devices.indexOf(device);
     if (i < 0 || (device.u === null && !allowPdu)) return false;
+    releaseDevice(this.world.cables, device.id);
     for (const port of device.ports) {
       if (port.plugged) unplug(port.plugged.cable, port.plugged.end);
       if (this.hinted?.port === port) this.hinted = null;
@@ -233,7 +235,7 @@ export class Room {
         id: c.id, kind: c.kind, color: c.color,
         ends: [c.ends[0]?.id ?? null, c.ends[1]?.id ?? null],
         nodes: Array.from(c.rope.pos, round3),
-        ...(c.ties.length ? { ties: c.ties.map((t) => ({ node: t.node, pos: t.pos.map(round3) as [number, number, number] })) } : {}),
+        ...(c.ties.length ? { ties: c.ties.map((t) => ({ node: t.node, pos: t.pos.map(round3) as [number, number, number], ...(t.hook ? { hook: t.hook } : {}) })) } : {}),
         ...(c.paid ? { paid: c.paid } : {}),
       }));
     return { serial: this.serial, spawned: this.spawned, devices, cables };
@@ -266,7 +268,8 @@ export class Room {
         const port = id === null ? undefined : portById.get(id);
         if (port) plug(c, end as 0 | 1, port);
       });
-      for (const t of saved.ties ?? []) restoreTie(c, t);
+      // 고리에 건 것은 그 매니저가 다시 끼워졌을 때만
+      for (const t of saved.ties ?? []) if (!t.hook || this.device(deviceOfHook(t.hook))) restoreTie(c, t);
     }
     this.serial = Math.max(this.serial, data.serial);
     this.spawned = data.spawned;

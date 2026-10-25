@@ -4,6 +4,7 @@ import { createStage } from './view/scene';
 import { createCameraRig } from './view/camera';
 import { createCableDrag } from './view/drag';
 import { createVelcroTool } from './view/velcro';
+import { createManagerTool } from './view/manager';
 import { createSellTool } from './view/sell';
 import { createStartRoom, restoreRoom } from './view/room';
 import { createPowerButtons } from './view/powerButton';
@@ -58,7 +59,7 @@ const buy = (id: DeviceDefId): boolean => {
   return true;
 };
 
-// 입력 우선순위는 등록 순서: 장비 들기 → 판매 → 전원 버튼 → 벨크로 → 케이블 드래그(손) → 장비 정보 카드 → OrbitControls
+// 입력 우선순위는 등록 순서: 장비 들기 → 판매 → 전원 버튼 → 벨크로 → 매니저 고리 → 케이블 드래그(손) → 장비 정보 카드 → OrbitControls
 const placement = createPlacement({
   canvas,
   camera: stage.camera,
@@ -82,7 +83,8 @@ const reinstall = (id: DeviceDefId, u: number, moving: MovingDevice) => {
   if (!device) return;
   if (moving.on) room.setPower(device, true);
   // device:installed의 "전원 버튼을 누르세요" 안내를 덮어씀 (켜진 채 뺐으면 이미 켜져 있음)
-  flashHint(`${DEVICES[id].name}: U${u}에 다시 끼움 · 뒷면에서 케이블을 다시 꽂으세요${moving.on ? '' : ' · 앞면 전원 버튼을 누르세요'}`);
+  const after = DEVICES[id].rings ? '뒷면 고리에 케이블을 다시 거세요' : `뒷면에서 케이블을 다시 꽂으세요${moving.on ? '' : ' · 앞면 전원 버튼을 누르세요'}`;
+  flashHint(`${DEVICES[id].name}: U${u}에 다시 끼움 · ${after}`);
 };
 let tool: ToolId = 'hand';
 events.on('tool:set', (t) => {
@@ -121,6 +123,15 @@ const velcro = createVelcroTool({
   active: () => tool === 'velcro',
   flash: (text) => flashHint(text),
 });
+// 매니저 고리도 케이블 끌기보다 먼저 — 손·벨크로 도구 둘 다
+const manager = createManagerTool({
+  canvas,
+  camera: stage.camera,
+  room,
+  drag: () => cableDrag,
+  active: () => tool === 'hand' || tool === 'velcro',
+  flash: (text) => flashHint(text),
+});
 const cableDrag = createCableDrag({
   canvas,
   camera: stage.camera,
@@ -129,7 +140,12 @@ const cableDrag = createCableDrag({
   // 벨크로 도구로도 끌어서 기둥에 걸침
   enabled: () => tool === 'hand' || tool === 'velcro',
   showPortHint: room.showPortHint,
-  snap: (ray) => velcro.snap(ray),
+  // 고리가 기둥보다 작은 과녁이라 먼저 (둘 다 부르는 건 안 붙은 쪽의 잡은 자리를 지우려고)
+  snap: (ray) => {
+    const ring = manager.snap(ray);
+    const post = velcro.snap(ring ? null : ray);
+    return ring ?? post;
+  },
 });
 const inspector = createInspector({
   root: hudRoot,
@@ -157,7 +173,13 @@ events.on('placement:held', (id) => {
   clearTimeout(hintTimer);
   hud.setHint(id ? holdHint(id as DeviceDefId) : null);
 });
-events.on('device:installed', () => flashHint('설치 완료 · 뒷면에서 전원선·랜선을 연결하고 앞면 전원 버튼을 누르세요'));
+events.on('device:installed', ({ deviceId }) =>
+  flashHint(
+    room.device(deviceId)?.def.rings
+      ? '🧷 케이블 매니저 설치 · 뒷면 고리에 케이블을 끌어 대고 Space로 걸기 (높이 달수록 남는 선이 덜 늘어져요)'
+      : '설치 완료 · 뒷면에서 전원선·랜선을 연결하고 앞면 전원 버튼을 누르세요',
+  ),
+);
 
 // 해금 없음: 막히는 건 자리 부족과 돈뿐
 const shop = createShop(hud.shopPanel, {
@@ -264,6 +286,7 @@ startLoop({
     inspector.update();
     room.sync(performance.now() / 1000);
     velcro.sync();
+    manager.sync();
     stage.renderer.render(stage.scene, stage.camera);
 
     if (debug) {

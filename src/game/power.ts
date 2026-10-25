@@ -6,7 +6,8 @@
 
 export const BOOT_MS = 3000;
 
-export type PowerRole = 'server' | 'switch' | 'pdu';
+/** passive: 전기·포트 없는 부품 (케이블 매니저) — 판정에서 빠짐 */
+export type PowerRole = 'server' | 'switch' | 'pdu' | 'passive';
 
 /** 꺼짐 · 켰지만 전기 없음 · 부팅 중 · 부팅 끝났지만 네트워크 없음 · 가동 */
 export type PowerStatus = 'off' | 'nopower' | 'booting' | 'nolink' | 'running';
@@ -83,6 +84,11 @@ function evaluate(devices: readonly PowerDevice[], links: ReadonlyMap<string, st
 
   // 1) 전기·부팅 (스위치·서버 공통)
   for (const d of devices) {
+    if (d.role === 'passive') {
+      d.status = 'off';
+      d.ready = false;
+      continue;
+    }
     if (d.role === 'pdu') {
       d.status = d.tripped ? 'nopower' : 'running';
       d.ready = !d.tripped;

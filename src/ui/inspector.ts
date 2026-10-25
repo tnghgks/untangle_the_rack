@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { hooksAt, ringsOf } from '../cable/manager';
 import { events } from '../core/events';
 import type { PowerStatus } from '../game/power';
 import { DEVICE_DEPTH, DEVICE_WIDTH, PDU_LAYOUT, type Device } from '../rack/device';
@@ -91,7 +92,20 @@ export function createInspector({ root, canvas, camera, controls, room, onRemove
     if (id) close();
   });
 
+  /** 케이블 매니저: 전기·포트 없이 고리만 */
+  const renderManager = (d: Device): string => {
+    const rings = d.u !== null && d.def.rings ? ringsOf(d.id, d.u, d.def.rings) : [];
+    const hooked = rings.reduce((n, r) => n + hooksAt(room.world.cables, r.id).length, 0);
+    return `
+      <div class="head"><b>${d.def.name}</b> <small>U${d.u}</small><button class="x" data-act="close" aria-label="닫기">×</button></div>
+      <div class="help">뒷면 고리에 케이블을 끌어 대고 Space로 걸기 · 고리를 클릭하면 빼기</div>
+      <div class="line">고리 ${rings.length}개 · 걸린 선 ${hooked}가닥</div>
+      <div class="acts"><button class="act" data-act="remove" title="랙에서 빼서 다른 칸에 끼움 (걸린 선은 풀림)">빼기</button></div>
+    `;
+  };
+
   const render = (d: Device): string => {
+    if (d.def.rings) return renderManager(d);
     const p = d.power;
     const [label, baseHelp] = STATUS_TEXT[p.status];
     // 꺼져 있을 때: 배선이 끝났는지에 따라 (뒷면 파란 등 = 배선 완료)
