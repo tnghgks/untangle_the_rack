@@ -7,8 +7,14 @@
 import type { PortKind } from '../cable/cable';
 
 export type DeviceDefId =
-  | 'server-entry' | 'server-web' | 'server-storage' | 'server-gpu' | 'switch-8' | 'switch-24' | 'pdu' | 'cable-manager';
+  | 'server-entry' | 'server-web' | 'server-storage' | 'server-gpu' | 'switch-8' | 'switch-24' | 'pdu' | 'cable-manager' | 'cable-manager-v';
 export type CableDefId = 'cable-lan' | 'cable-power';
+/** 랙 칸이 아니라 옆면에 붙는 장비 (sizeU 0) */
+export type SideDefId = 'pdu' | 'cable-manager-v';
+
+export function isSideDef(id: DeviceDefId): id is SideDefId {
+  return id === 'pdu' || id === 'cable-manager-v';
+}
 
 export interface PortDef {
   kind: PortKind;
@@ -19,7 +25,7 @@ export interface PortDef {
 export interface DeviceDef {
   id: DeviceDefId;
   name: string;
-  /** 0 = 랙 옆면(PDU) */
+  /** 0 = 랙 옆면(PDU·세로 매니저) */
   sizeU: number;
   price: number;
   incomePerSec: number;
@@ -29,7 +35,7 @@ export interface DeviceDef {
   capacity?: number;
   ports: PortDef[];
   color: number;
-  /** 케이블 매니저: 뒷면 고리 x 자리 (cable/manager.ts). 전기·포트 없음 */
+  /** 케이블 매니저: 고리 자리 (cable/manager.ts) — 랙 장비는 x, 옆면(세로 매니저)은 높이 y. 전기·포트 없음 */
   rings?: number[];
 }
 
@@ -89,6 +95,11 @@ export const DEVICES: Record<DeviceDefId, DeviceDef> = {
     id: 'cable-manager', name: '케이블 매니저', sizeU: 1, price: 100, incomePerSec: 0, watts: 0,
     ports: [], color: 0x24272c, rings: [-0.2, -0.1, 0, 0.1, 0.2],
   },
+  // 가격 100원 (10-26 사용자 확정). 랙 옆 기둥 바깥 세로 덕트 — U를 안 쓰고, 걸린 선은 배기 통로 밖. 옆면 두 자리 (PDU와 따로)
+  'cable-manager-v': {
+    id: 'cable-manager-v', name: '세로 케이블 매니저', sizeU: 0, price: 100, incomePerSec: 0, watts: 0,
+    ports: [], color: 0x24272c, rings: Array.from({ length: 11 }, (_, i) => Math.round((0.2 + i * 0.16) * 100) / 100),
+  },
 };
 
 /** 같은 장비를 살 때마다 가격 배수 (방치형 표준 1.15보다 가파르게 — 인플레이션 억제). 케이블은 고정가 */
@@ -101,6 +112,6 @@ export const CABLES: Record<CableDefId, CableDef> = {
 };
 
 /** 상점에 보이는 순서 */
-export const SHOP_DEVICES: DeviceDefId[] = ['server-entry', 'server-web', 'server-storage', 'server-gpu', 'switch-24', 'pdu', 'cable-manager'];
+export const SHOP_DEVICES: DeviceDefId[] = ['server-entry', 'server-web', 'server-storage', 'server-gpu', 'switch-24', 'pdu', 'cable-manager', 'cable-manager-v'];
 export const SHOP_CABLES: CableDefId[] = ['cable-lan', 'cable-power'];
 

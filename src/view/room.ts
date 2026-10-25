@@ -7,12 +7,12 @@ import { deviceOfHook, releaseDevice } from '../cable/manager';
 import { restoreTie, untie } from '../cable/velcro';
 import { events } from '../core/events';
 import { createRng } from '../core/rng';
-import type { DeviceDefId } from '../data/catalog';
+import { isSideDef, type DeviceDefId, type SideDefId } from '../data/catalog';
 import { CABLE_DEFAULT_LENGTH, RACK_HEIGHT } from '../data/units';
 import { BOOT_MS, resetBreaker, updatePower, type PowerSummary } from '../game/power';
 import { round3, type SaveData, type SavedCable, type SavedDevice } from '../game/save';
 import { airflowOf, blockedLength, incomeFactor } from '../game/thermal';
-import { createPdu, createRackDevice, EXHAUST_ZONE, PDU_SIDES, setDeviceLed, setDevicePower, type Device, type Socket } from '../rack/device';
+import { createPdu, createRackDevice, createSideManager, EXHAUST_ZONE, PDU_SIDES, setDeviceLed, setDevicePower, type Device, type Socket } from '../rack/device';
 import { RackSlots } from '../rack/rack';
 import { collectColliders } from './scene';
 
@@ -71,19 +71,27 @@ export class Room {
     return device;
   }
 
-  /** 비어 있는 옆면 자리 (없으면 null) */
-  freePduSide(): number | null {
-    for (let side = 0; side < PDU_SIDES; side++) if (!this.devices.some((d) => d.side === side)) return side;
+  /** 그 옆면 장비의 비어 있는 자리 (없으면 null). PDU와 세로 매니저는 자리가 따로 (각각 왼쪽·오른쪽) */
+  freeSide(defId: SideDefId): number | null {
+    for (let side = 0; side < PDU_SIDES; side++) if (!this.devices.some((d) => d.def.id === defId && d.side === side)) return side;
     return null;
   }
 
-  /** 빈 옆면에 PDU를 붙임 (자리 없으면 null) */
-  addPdu(side = this.freePduSide(), id = `pdu#${++this.serial}`): Device | null {
-    if (side === null || this.devices.some((d) => d.side === side)) return null;
-    const { device, sockets } = createPdu(id, side);
+  freePduSide(): number | null {
+    return this.freeSide('pdu');
+  }
+
+  /** 빈 옆면에 붙임 (자리 없으면 null) */
+  addSide(defId: SideDefId, side = this.freeSide(defId), id = `${defId}#${++this.serial}`): Device | null {
+    if (side === null || this.devices.some((d) => d.def.id === defId && d.side === side)) return null;
+    const { device, sockets } = defId === 'pdu' ? createPdu(id, side) : createSideManager(id, side);
     this.scene.add(device.group);
     this.addDevice(device, sockets);
     return device;
+  }
+
+  addPdu(side = this.freePduSide(), id = `pdu#${++this.serial}`): Device | null {
+    return this.addSide('pdu', side, id);
   }
 
   private addDevice(device: Device, sockets: Socket[]) {
@@ -244,7 +252,7 @@ export class Room {
   /** 불러오기: 저장된 id·자리로 장비를, 마디 좌표 그대로 케이블을 다시 만든다 */
   restore(data: Pick<SaveData, 'serial' | 'spawned' | 'devices' | 'cables'>): void {
     for (const d of data.devices) {
-      const device = d.defId === 'pdu' ? this.addPdu(d.side, d.id) : d.u === null ? null : this.install(d.defId, d.u, d.id);
+      const device = isSideDef(d.defId) ? this.addSide(d.defId, d.side, d.id) : d.u === null ? null : this.install(d.defId, d.u, d.id);
       if (!device) continue;
       if (device.def.id !== 'pdu') setDevicePower(device, d.on);
       device.power.tripped = d.tripped;

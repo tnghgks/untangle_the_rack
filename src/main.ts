@@ -14,7 +14,7 @@ import { endNode } from './cable/cable';
 import { plug } from './cable/plug';
 import { canReach } from './cable/velcro';
 import { createPlacement, type MovingDevice } from './rack/placement';
-import { CABLES, DEVICES, START_MONEY, type DeviceDefId } from './data/catalog';
+import { CABLES, DEVICES, isSideDef, START_MONEY, type DeviceDefId } from './data/catalog';
 import { events, type ToolId } from './core/events';
 import { createHud } from './ui/hud';
 import { createShop } from './ui/shop';
@@ -218,18 +218,22 @@ events.on('device:installed', ({ deviceId }) =>
 // 해금 없음: 막히는 건 자리 부족과 돈뿐
 const shop = createShop(hud.shopPanel, {
   blockedReason: (def) =>
-    def.sizeU === 0
-      ? room.freePduSide() === null ? '옆면 자리 없음' : state.money < price(def.id) ? '돈 부족' : null
+    isSideDef(def.id)
+      ? room.freeSide(def.id) === null ? '옆면 자리 없음' : state.money < price(def.id) ? '돈 부족' : null
       : room.slots.firstFree(def.sizeU) === null ? `빈 ${def.sizeU}U 자리 없음` : state.money < price(def.id) ? '돈 부족' : null,
   cableBlocked: (id) => (state.money < CABLES[id].price ? '돈 부족' : null),
   priceOf: price,
   onBuyDevice: (id) => {
-    if (id === 'pdu') {
-      // 옆면은 고를 자리가 없어 바로 붙임
-      if (room.freePduSide() === null || !buy(id)) return;
-      room.addPdu();
+    if (isSideDef(id)) {
+      // 옆면은 고를 자리가 없어 바로 붙임 (왼쪽부터)
+      if (room.freeSide(id) === null || !buy(id)) return;
+      const d = room.addSide(id)!;
       shop.refresh();
-      flashHint('PDU를 랙 옆면에 달았어요 · 뒷면에서 콘센트에 전원선을 꽂으세요');
+      flashHint(
+        id === 'pdu'
+          ? 'PDU를 랙 옆면에 달았어요 · 뒷면에서 콘센트에 전원선을 꽂으세요'
+          : `🧷 세로 케이블 매니저를 ${d.side === 0 ? '왼쪽' : '오른쪽'} 옆면에 달았어요 · 케이블을 옆으로 끌어 고리에 대고 Space · 위쪽 고리에 걸었다가 아래 고리로 다시 내려 걸면 남는 선이 정리돼요`,
+      );
       return;
     }
     if (placement.held === id) placement.cancel();

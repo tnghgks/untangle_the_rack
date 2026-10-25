@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Port, PortKind } from '../cable/cable';
-import { RING_OUT, RING_R, ringsOf } from '../cable/manager';
+import { RING_OUT, RING_R, ringsOf, SIDE_RING_X, SIDE_RING_Z, sideRingsOf } from '../cable/manager';
 import type { Aabb, Vec3 } from '../cable/collide';
 import { DEVICES, type DeviceDef, type DeviceDefId } from '../data/catalog';
 import { RACK, RACK_HEIGHT, U, uBottomY } from '../data/units';
@@ -168,6 +168,50 @@ function addRings(g: THREE.Group, id: string, u: number, xs: readonly number[]):
     stem.position.set(x, y - RING_R, z + RING_OUT / 2);
     g.add(stem);
   }
+}
+
+/**
+ * 세로 매니저: 기둥 바깥에 세운 기둥(몸체)과 y축을 감싸는 고리들(세로로 지나는 선이 통과). 자리는 왼쪽(0)·오른쪽(1).
+ * 치수는 함수 안에서 — manager.ts와 순환 import라 모듈 맨 위에서 그 상수를 쓰면 브라우저에서 아직 정의 전
+ */
+export function createSideManager(id: string, side: number): { device: Device; sockets: Socket[] } {
+  const L = { x: SIDE_RING_X + RING_R + 0.02, w: 0.016, d: 0.05, y0: 0.08, y1: RACK_HEIGHT - 0.1 };
+  const def = DEVICES['cable-manager-v'];
+  const sx = side === 0 ? -1 : 1;
+  const g = new THREE.Group();
+  g.name = id;
+  const body = new THREE.Mesh(
+    new THREE.BoxGeometry(L.w, L.y1 - L.y0, L.d),
+    new THREE.MeshStandardMaterial({ color: def.color, metalness: 0.5, roughness: 0.5 }),
+  );
+  body.position.set(sx * L.x, (L.y0 + L.y1) / 2, SIDE_RING_Z);
+  body.castShadow = true;
+  body.userData.solid = true;
+  body.userData.deviceId = id;
+  g.add(body);
+  // 위아래 팔로 랙 기둥에 붙인 모양 (충돌 상자 아님)
+  const armLen = L.x - L.w / 2 - RACK.width / 2;
+  for (const y of [L.y0 + 0.02, L.y1 - 0.02]) {
+    const arm = new THREE.Mesh(new THREE.BoxGeometry(armLen, 0.02, 0.02), new THREE.MeshStandardMaterial({ color: 0x5a6068, metalness: 0.6, roughness: 0.5 }));
+    arm.position.set(sx * (RACK.width / 2 + armLen / 2), y, -(RACK.depth - RACK.frame) / 2);
+    g.add(arm);
+  }
+  const ringGeo = new THREE.TorusGeometry(RING_R, RING_TUBE, 8, 24);
+  const stemLen = L.x - L.w / 2 - SIDE_RING_X - RING_R;
+  const stemGeo = new THREE.BoxGeometry(stemLen, 0.004, 0.006);
+  for (const ring of sideRingsOf(id, side, def.rings!)) {
+    const [x, y, z] = ring.pos;
+    const mesh = new THREE.Mesh(ringGeo, new THREE.MeshStandardMaterial({ color: 0x8a929c, metalness: 0.7, roughness: 0.35 }));
+    mesh.rotation.x = Math.PI / 2;
+    mesh.position.set(x, y, z);
+    mesh.userData.ringId = ring.id;
+    g.add(mesh);
+    const stem = new THREE.Mesh(stemGeo, new THREE.MeshStandardMaterial({ color: 0x5a6068, metalness: 0.6, roughness: 0.5 }));
+    stem.position.set(x + sx * (RING_R + stemLen / 2), y, z);
+    g.add(stem);
+  }
+  const power = powerOf(id, def, 'passive', []);
+  return { device: { id, def, u: null, side, on: false, ports: [], group: g, body, button: null, led: null, backLed: null, power }, sockets: [] };
 }
 
 function powerOf(id: string, def: DeviceDef, role: PowerDevice['role'], ports: Port[]): PowerDevice {

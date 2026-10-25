@@ -1,13 +1,13 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import type { Cable } from '../src/cable/cable';
-import { hook, hooksAt, ringsOf, unhook, type Ring } from '../src/cable/manager';
+import { deviceRings, hook, hooksAt, ringsOf, unhook, type Ring } from '../src/cable/manager';
 import { strapsOf } from '../src/cable/velcro';
 import { STEP_SEC } from '../src/core/loop';
 import { DEVICES } from '../src/data/catalog';
 import { updatePower } from '../src/game/power';
 import { parseSave, SAVE_VERSION, type SaveData } from '../src/game/save';
-import type { Device } from '../src/rack/device';
+import { EXHAUST_ZONE, type Device } from '../src/rack/device';
 import { createStartRoom, restoreRoom, type Room } from '../src/view/room';
 
 function backmost(c: Cable): number {
@@ -173,5 +173,93 @@ describe('케이블 매니저', () => {
     const bare = restoreRoom(new THREE.Scene(), new THREE.Group(), noManager);
     expect(bare.world.cables[2].ties).toHaveLength(0);
     expect(parseSave(JSON.stringify({ ...data, cables: [{ ...data.cables[2], ties: [{ node, pos: [0, 0, 0], hook: 3 }] }] }))).toBeNull();
+  });
+});
+
+describe('세로 케이블 매니저', () => {
+  function withSide(): { room: Room; manager: Device; rings: Ring[] } {
+    const room = createStartRoom(new THREE.Scene(), new THREE.Group());
+    const manager = room.addSide('cable-manager-v')!;
+    steps(room, 240);
+    return { room, manager, rings: deviceRings(manager) };
+  }
+
+  /** 플레이어처럼: 포트 쪽 끝부터 닿을 만큼 떨어진 마디를 잡아 고리로 끌어다 대고 든 채 건다 */
+  function hookUp(room: Room, c: Cable, ring: Ring) {
+    const last = [...c.ties].sort((a, b) => b.node - a.node)[0];
+    const from = last?.pos ?? c.ends[0]!.pos;
+    const d = Math.hypot(ring.pos[0] - from[0], ring.pos[1] - from[1], ring.pos[2] - from[2]);
+    const node = (last?.node ?? 0) + Math.ceil((d * 1.08) / c.rope.cfg.segLen) + 1;
+    c.rope.grab(node);
+    for (let i = 0; i < 180; i++) {
+      const t: [number, number, number] = [...ring.pos];
+      c.rope.clampToReach(t);
+      c.rope.setGrabTarget(t[0], t[1], t[2]);
+      room.world.step(STEP_SEC);
+    }
+    const r = hook(room.world.cables, ring, { cable: c, node });
+    c.rope.release();
+    return r;
+  }
+
+  it('PDU와 옆면 자리가 따로 — 왼쪽에 PDU가 있어도 왼쪽에 달림, 두 개까지', () => {
+    const { room, manager } = withSide();
+    expect(manager.side).toBe(0);
+    expect(room.freePduSide()).toBe(1);
+    expect(room.addSide('cable-manager-v')!.side).toBe(1);
+    expect(room.freeSide('cable-manager-v')).toBeNull();
+    expect(room.freePduSide()).toBe(1);
+  });
+
+  it('고리가 세로로 늘어서고 랙 폭 밖 (배기 통로 밖)', () => {
+    const { rings } = withSide();
+    expect(rings.length).toBeGreaterThan(5);
+    for (const r of rings) {
+      expect(r.axis).toBe(1);
+      expect(Math.abs(r.pos[0])).toBeGreaterThan(EXHAUST_ZONE.max[0]);
+    }
+    expect(rings[1].pos[1]).toBeGreaterThan(rings[0].pos[1]);
+  });
+
+  it('남는 선을 덕트 위로 올렸다 내려 걸면 공기 흐름이 회복 (시작 방 23% → 거의 100%)', () => {
+    // 10-26 헤드리스: 고리 하나만 29%, 위로 두 개(0→2) 약 60%, 위로 갔다 내려오기(0→3→1) 100%
+    const { room, rings } = withSide();
+    room.updatePower(Date.now());
+    expect(room.airflow).toBeLessThan(0.3);
+    for (const c of room.world.cables) {
+      for (const k of [0, 3, 1]) expect(hookUp(room, c, rings[k]).hooked).toEqual([c]);
+    }
+    steps(room, 600);
+    room.updatePower(Date.now());
+    expect(room.airflow).toBeGreaterThan(0.95);
+  });
+
+  it('세로로 이어 걸면 고리 사이가 곧게 (위아래로 비켜 흡수)', () => {
+    const { room, rings } = withSide();
+    const c = room.world.cables[2];
+    for (const ring of rings.slice(0, 3)) expect(hookUp(room, c, ring).hooked).toEqual([c]);
+    steps(room, 300);
+    const ties = [...c.ties].sort((a, b) => a.node - b.node);
+    const p = c.rope.pos;
+    // 고리 사이 마디가 덕트 줄(고리 x)에서 벗어난 최대 거리
+    let off = 0;
+    for (let k = 1; k < ties.length; k++) {
+      for (let i = ties[k - 1].node + 1; i < ties[k].node; i++) off = Math.max(off, Math.abs(p[i * 3] - ties[k].pos[0]));
+    }
+    expect(off).toBeLessThan(0.03);
+  });
+
+  it('판매하면 걸린 선이 풀리고, 저장·불러오기에 자리와 고리가 남음', () => {
+    const { room, manager, rings } = withSide();
+    const c = room.world.cables[2];
+    hookUp(room, c, rings[0]);
+    const data: SaveData = { v: SAVE_VERSION, money: 0, bought: {}, ...room.snapshot() };
+    const back = restoreRoom(new THREE.Scene(), new THREE.Group(), parseSave(JSON.stringify(data))!);
+    const again = back.device(manager.id)!;
+    expect(again.side).toBe(0);
+    expect(hooksAt(back.world.cables, rings[0].id)).toHaveLength(1);
+    expect(room.remove(manager)).toBe(false); // 옆면은 판매로만
+    expect(room.remove(manager, true)).toBe(true);
+    expect(c.ties).toHaveLength(0);
   });
 });

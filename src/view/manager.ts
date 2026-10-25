@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Vec3 } from '../cable/collide';
-import { hook, hooksAt, ringsOf, unhook, type Ring } from '../cable/manager';
+import { deviceRings, hook, hooksAt, unhook, type Ring } from '../cable/manager';
 import type { CableDrag } from './drag';
 import type { Room } from './room';
 
@@ -38,8 +38,7 @@ const ndc = new THREE.Vector2();
 const at = new THREE.Vector3();
 
 export function createManagerTool({ canvas, camera, room, drag, active, flash }: ManagerToolDeps): ManagerTool {
-  const rings = (): Ring[] =>
-    room.devices.flatMap((d) => (d.def.rings && d.u !== null ? ringsOf(d.id, d.u, d.def.rings) : []));
+  const rings = (): Ring[] => room.devices.flatMap(deviceRings);
 
   /** 광선이 가장 가깝게(화면 각도로) 지나는 고리. 멀리서 봐도 화면에서 같은 크기만큼 잡히게 */
   const rayToRing = (ray: THREE.Ray): Ring | null => {
