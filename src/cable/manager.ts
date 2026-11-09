@@ -7,7 +7,7 @@ import { RACK, U, uBottomY } from '../data/units';
 import type { Vec3 } from './collide';
 
 /** 장비 뒷면 z (device.ts BACK_Z와 같은 값) */
-const BACK_Z = -(RACK.depth - 0.16) / 2 - 0.002;
+export const BACK_Z = -(RACK.depth - 0.16) / 2 - 0.002;
 /** 고리 중심이 뒷면에서 떨어진 거리 */
 export const RING_OUT = 0.05;
 export const RING_R = 0.018;
