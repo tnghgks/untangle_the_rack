@@ -320,7 +320,7 @@ startLoop({
     placement.refresh();
     lastRealMs = now;
     advance();
-    hud.setModel({ money: state.money, ...room.summary, incomePerSec: room.incomePerSec, airflow: room.airflow, pduWarn: pduWarn() });
+    hud.setModel({ money: state.money, ...room.summary, incomePerSec: room.incomePerSec, pduWarn: pduWarn() });
     inspector.update();
     room.sync(performance.now() / 1000);
     velcro.sync();

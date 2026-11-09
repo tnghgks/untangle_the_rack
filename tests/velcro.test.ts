@@ -46,14 +46,10 @@ describe('벨크로', () => {
     expect(strapsOf(room.world.cables)).toHaveLength(0);
   });
 
-  it('손으로 기둥에 끌어다 대고 띠를 감으면 공기 흐름이 회복', () => {
+  it('손으로 기둥에 끌어다 대고 띠를 감으면 묶임', () => {
     const room = settled();
-    room.updatePower(Date.now());
-    expect(room.airflow).toBeLessThan(0.8);
     for (const c of room.world.cables) expect(routeAndStrap(room, c, -1, 0.8).tied).toContain(c);
     steps(room, 600);
-    room.updatePower(Date.now());
-    expect(room.airflow).toBeGreaterThan(0.9);
   });
 
   it('한 띠가 기둥에 모인 여러 가닥을 다발로 묶고, 다시 고르면 다 풀림', () => {

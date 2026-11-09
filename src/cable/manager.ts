@@ -13,7 +13,7 @@ import { canReach, untie, type Tie } from './velcro';
 
 /** 장비 뒷면 z (device.ts BACK_Z와 같은 값) */
 const BACK_Z = -(RACK.depth - 0.16) / 2 - 0.002;
-/** 고리 중심이 뒷면에서 떨어진 거리 — 배기 통로(EXHAUST_GAP 0.1) 앞쪽이라 건 선은 막힘으로 안 셈 */
+/** 고리 중심이 뒷면에서 떨어진 거리 */
 export const RING_OUT = 0.05;
 export const RING_R = 0.018;
 /** 고리 중심에서 이 거리 안의 마디를 건다 */

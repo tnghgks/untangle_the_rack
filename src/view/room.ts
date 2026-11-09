@@ -11,8 +11,7 @@ import { isSideDef, type DeviceDefId, type SideDefId } from '../data/catalog';
 import { CABLE_DEFAULT_LENGTH, RACK_HEIGHT } from '../data/units';
 import { BOOT_MS, resetBreaker, updatePower, type PowerSummary } from '../game/power';
 import { round3, type SaveData, type SavedCable, type SavedDevice } from '../game/save';
-import { airflowOf, blockedLength, incomeFactor } from '../game/thermal';
-import { createPdu, createRackDevice, createSideManager, EXHAUST_ZONE, PDU_SIDES, setDeviceLed, setDevicePower, type Device, type Socket } from '../rack/device';
+import { createPdu, createRackDevice, createSideManager, PDU_SIDES, setDeviceLed, setDevicePower, type Device, type Socket } from '../rack/device';
 import { RackSlots } from '../rack/rack';
 import { collectColliders } from './scene';
 
@@ -46,12 +45,10 @@ export class Room {
   private readonly rng = createRng(42);
   /** 마지막 가동 판정 결과 */
   summary: PowerSummary = { incomePerSec: 0, powerUsed: 0, powerCap: 0 };
-  /** 마지막 판정의 공기 흐름 0~1 (thermal.ts) */
-  airflow = 1;
 
-  /** 스로틀링을 뺀 실제 초당 수익 */
+  /** 초당 수익 */
   get incomePerSec(): number {
-    return this.summary.incomePerSec * incomeFactor(this.airflow);
+    return this.summary.incomePerSec;
   }
 
   constructor(
@@ -146,9 +143,8 @@ export class Room {
     events.emit('device:power', { deviceId: device.id, on });
   }
 
-  /** 가동 판정 + LED + 공기 흐름. 매 틱과 배선·전원 이벤트마다 */
+  /** 가동 판정 + LED. 매 틱과 배선·전원 이벤트마다 */
   updatePower(now: number): PowerSummary {
-    this.airflow = airflowOf(blockedLength(this.world.cables, EXHAUST_ZONE));
     const links = new Map<string, string>();
     for (const c of this.world.cables) {
       const [a, b] = c.ends;
@@ -181,7 +177,7 @@ export class Room {
     const color = saved?.color ?? (kind === 'lan' ? LAN_COLORS[n % LAN_COLORS.length] : POWER_COLOR);
     const c = createCable(saved?.id ?? `cable-${n}`, kind, CABLE_DEFAULT_LENGTH, color);
     this.world.cables.push(c);
-    const m = new CableMesh(c, EXHAUST_ZONE);
+    const m = new CableMesh(c);
     this.scene.add(m.group);
     this.meshes.push(m);
     return c;
@@ -307,7 +303,7 @@ export class Room {
 
   /** 메시 갱신 + 빈 포트 깜빡임 */
   sync(timeSec: number): void {
-    for (const m of this.meshes) m.update(timeSec);
+    for (const m of this.meshes) m.update();
     const k = 0.25 + 0.25 * Math.sin(timeSec * 5);
     for (const s of this.sockets.values()) {
       if (s === this.hinted) continue;

@@ -5,9 +5,10 @@ import { deviceRings, hook, hooksAt, ringsOf, unhook, type Ring } from '../src/c
 import { strapsOf } from '../src/cable/velcro';
 import { STEP_SEC } from '../src/core/loop';
 import { DEVICES } from '../src/data/catalog';
+import { RACK } from '../src/data/units';
 import { updatePower } from '../src/game/power';
 import { parseSave, SAVE_VERSION, type SaveData } from '../src/game/save';
-import { EXHAUST_ZONE, type Device } from '../src/rack/device';
+import type { Device } from '../src/rack/device';
 import { createStartRoom, restoreRoom, type Room } from '../src/view/room';
 
 function backmost(c: Cable): number {
@@ -122,15 +123,10 @@ describe('케이블 매니저', () => {
     expect(hook(room.world.cables, rings[2]).hooked).toHaveLength(0);
   });
 
-  it('고리에 걸면 공기 흐름이 회복, 고리를 비우면 풀림', () => {
+  it('고리에 걸면 걸리고, 고리를 비우면 풀림', () => {
     const { room, rings } = withManager();
-    room.updatePower(Date.now());
-    const before = room.airflow;
-    expect(before).toBeLessThan(0.8);
     room.world.cables.forEach((c, i) => expect(routeAndHook(room, c, rings[i + 1]).hooked).toContain(c));
     steps(room, 600);
-    room.updatePower(Date.now());
-    expect(room.airflow).toBeGreaterThan(0.9);
     // 기둥 띠로는 안 보임
     expect(strapsOf(room.world.cables)).toHaveLength(0);
     expect(unhook(room.world.cables, rings[1].id)).toBe(1);
@@ -211,27 +207,14 @@ describe('세로 케이블 매니저', () => {
     expect(room.freePduSide()).toBe(1);
   });
 
-  it('고리가 세로로 늘어서고 랙 폭 밖 (배기 통로 밖)', () => {
+  it('고리가 세로로 늘어서고 랙 폭 밖', () => {
     const { rings } = withSide();
     expect(rings.length).toBeGreaterThan(5);
     for (const r of rings) {
       expect(r.axis).toBe(1);
-      expect(Math.abs(r.pos[0])).toBeGreaterThan(EXHAUST_ZONE.max[0]);
+      expect(Math.abs(r.pos[0])).toBeGreaterThan(RACK.width / 2);
     }
     expect(rings[1].pos[1]).toBeGreaterThan(rings[0].pos[1]);
-  });
-
-  it('남는 선을 덕트 위로 올렸다 내려 걸면 공기 흐름이 회복 (시작 방 23% → 거의 100%)', () => {
-    // 10-26 헤드리스: 고리 하나만 29%, 위로 두 개(0→2) 약 60%, 위로 갔다 내려오기(0→3→1) 100%
-    const { room, rings } = withSide();
-    room.updatePower(Date.now());
-    expect(room.airflow).toBeLessThan(0.3);
-    for (const c of room.world.cables) {
-      for (const k of [0, 3, 1]) expect(hookUp(room, c, rings[k]).hooked).toEqual([c]);
-    }
-    steps(room, 600);
-    room.updatePower(Date.now());
-    expect(room.airflow).toBeGreaterThan(0.95);
   });
 
   it('세로로 이어 걸면 고리 사이가 곧게 (위아래로 비켜 흡수)', () => {
