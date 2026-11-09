@@ -1,7 +1,7 @@
 // 경로 찾기: 선을 가이드(매니저)에 올리면 포트 → 가이드들 → 포트로 이어지는 꺾은선을 정한다.
 // Three.js에 의존하지 않는다 (헤드리스).
 
-import type { Port } from './cable';
+import type { Port, Route } from './cable';
 import type { Vec3 } from './collide';
 import type { Guide } from './guide';
 
@@ -120,4 +120,9 @@ export function laneOffset(k: number, tight: number, radius: number): LaneOffset
   const col = k % 4;
   const row = Math.floor(k / 4);
   return { d: [(col - 1.5) * gap, row * gap] };
+}
+
+/** 정리 정도 0..1: 경로의 가이드 중 묶인 비율 (경로 없으면 0) */
+export function tidyDegree(r: Route | null): number {
+  return r ? r.tied.filter((g) => r.guides.includes(g)).length / r.guides.length : 0;
 }

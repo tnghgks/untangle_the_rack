@@ -24,12 +24,20 @@ export interface Cable {
   color: number;
   /** 상점에서 낸 값 (판매 환급용). 시작 배선은 0 */
   paid: number;
+  /** 가이드 경로에 들었으면 그 경로 (null = 늘어진 로프) */
+  route: Route | null;
+}
+
+/** 가이드 경로: 지나는 가이드(매니저 id) 순서와 그중 벨크로로 묶은 가이드 */
+export interface Route {
+  guides: string[];
+  tied: string[];
 }
 
 export const CABLE_RADIUS: Record<PortKind, number> = { lan: 0.003, power: 0.004 };
 
 export function createCable(id: string, kind: PortKind, length: number, color: number): Cable {
-  return { id, kind, rope: new Rope(length, { radius: CABLE_RADIUS[kind] }), ends: [null, null], color, paid: 0 };
+  return { id, kind, rope: new Rope(length, { radius: CABLE_RADIUS[kind] }), ends: [null, null], color, paid: 0, route: null };
 }
 
 export function endNode(cable: Cable, end: CableEnd): number {
