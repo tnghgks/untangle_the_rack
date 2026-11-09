@@ -95,7 +95,7 @@ export const DEVICES: Record<DeviceDefId, DeviceDef> = {
     id: 'cable-manager', name: '케이블 매니저', sizeU: 1, price: 100, incomePerSec: 0, watts: 0,
     ports: [], color: 0x24272c, rings: [-0.2, -0.1, 0, 0.1, 0.2],
   },
-  // 가격 100원 (10-26 사용자 확정). 랙 옆 기둥 바깥 세로 덕트 — U를 안 쓰고, 걸린 선은 배기 통로 밖. 옆면 두 자리 (PDU와 따로)
+  // 가격 100원 (10-26 사용자 확정). 랙 옆 기둥 바깥 세로 덕트 — U를 안 쓰고, 옆면 두 자리 (PDU와 따로)
   'cable-manager-v': {
     id: 'cable-manager-v', name: '세로 케이블 매니저', sizeU: 0, price: 100, incomePerSec: 0, watts: 0,
     ports: [], color: 0x24272c, rings: Array.from({ length: 11 }, (_, i) => Math.round((0.2 + i * 0.16) * 100) / 100),

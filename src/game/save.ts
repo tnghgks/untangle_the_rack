@@ -27,7 +27,7 @@ export interface SavedCable {
   ends: [string | null, string | null];
   /** 마디 좌표 xyz 이어 붙임, 소수 3자리 (mm) */
   nodes: number[];
-  /** 벨크로·케이블 매니저: 묶은 마디와 고정 자리, 고리에 건 것이면 고리 id. 없으면 안 묶음 (P4 이전 저장) */
+  /** 옛 저장(벨크로·고리 걸기 시절)의 묶은 마디. 더는 안 쓰고 검증만 통과시킨다 */
   ties?: { node: number; pos: [number, number, number]; hook?: string }[];
   /** 상점에서 낸 값 (판매 환급용). 없으면 0 — 시작 배선·옛 저장 */
   paid?: number;

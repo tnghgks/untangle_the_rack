@@ -5,7 +5,7 @@ import type { Room } from './room';
 
 // 클릭할 수 있는 것 위에 커서를 올리면 은은하게 밝히고 커서를 바꾼다 (10-25 플레이 피드백).
 // 고르는 순서는 클릭 우선순위와 같음: 전원 버튼 → 케이블 → 장비 몸체(정보 카드).
-// 전원 버튼·장비는 pointer, 케이블은 grab (벨크로 도구도 끌 수 있어 grab, 기둥 위 커서는 velcro.ts). 장비를 든 동안·드래그 중에는 강조를 끄고 커서는 그쪽에 맡긴다.
+// 전원 버튼·장비는 pointer, 케이블은 grab. 장비를 든 동안·드래그 중에는 강조를 끄고 커서는 그쪽에 맡긴다.
 // 판매 도구면 커서는 pointer, 강조는 붉게.
 
 const GLOW: Record<Kind, number> = { button: 0x2c6640, cable: 0x3a3f48, device: 0x22344a };

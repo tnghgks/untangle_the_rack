@@ -10,7 +10,7 @@ export interface GameEvents {
   'tool:set': ToolId;
   'cable:plugged': { cableId: string; portId: string };
   'cable:unplugged': { cableId: string; portId: string };
-  /** 벨크로를 묶음 / 풂 (손으로 세게 당겨 떨어진 것 포함) */
+  /** 케이블 묶음 / 풂 (Task 4·7에서 새 모델로 대체 예정) */
   'cable:tied': { cableId: string; node: number };
   'cable:untied': { cableId: string; node: number };
   'device:installed': { deviceId: string };

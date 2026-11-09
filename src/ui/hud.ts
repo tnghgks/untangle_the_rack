@@ -56,9 +56,7 @@ const GUIDE_HTML = `
   <ul>
     <li>가운데 버튼 드래그: 회전 · 오른쪽 또는 Shift+왼쪽 드래그: 이동 · 휠: 확대</li>
     <li>케이블 끄는 중 휠: 앞뒤로 밀기 · 꽂힌 커넥터는 직접 잡고 끌어야 뽑힘 (케이블을 당겨도 안 빠짐)</li>
-    <li>🔗 벨크로 (2): 케이블을 끌어 뒷면 기둥 위에 대면 기둥에 붙음 → 든 채로 Space(또는 오른쪽 클릭)로 띠 감기 · 같은 높이에 또 감으면 한 다발 · 띠를 클릭하면 풀기 · 세게 당기면 떨어져요</li>
-    <li>🧷 케이블 매니저 (상점, 1U): 뒷면 고리에 케이블을 끌어 대고 Space(또는 오른쪽 클릭)로 걸기 · 손·벨크로 도구 둘 다 · 고리를 클릭하면 빼기 · 높이 달수록 남는 선이 덜 늘어져요</li>
-    <li>🧷 세로 케이블 매니저 (상점, 옆면): 랙 옆 세로 고리 줄 · 포트에서 옆으로 끌어 위쪽 고리에 걸었다가 아래 고리로 다시 내려 걸면 남는 선이 덕트를 따라 정리돼요 (랙 폭 밖이라 배기를 안 막음)</li>
+    <li>🧷 케이블 매니저 (상점): 뒷면 1U 가로 고리 · 옆면 세로 고리 (케이블 정리 도구는 새로 만드는 중)</li>
     <li>💰 판매 (3): 장비나 케이블을 클릭하면 바로 판매, 산 값의 50% 환급 (시작 지급은 0원)</li>
     <li>장비 클릭: 정보 카드 (켜기·끄기·빼기) · 장비 끌기: 다른 칸으로 옮기기 (꽂힌 케이블은 닿으면 그대로) · Esc: 취소</li>
   </ul>
@@ -86,7 +84,7 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
       </div>
       <div class="group" role="group" aria-label="도구">
         <button class="on" data-tool="hand" title="케이블 잡아 끌기·꽂기 (1)">✋ 손</button>
-        <button data-tool="velcro" title="케이블을 끌어 기둥에 대고 Space로 띠 감기, 띠를 클릭하면 풀기 (2)">🔗 벨크로</button>
+        <button data-tool="velcro" title="케이블 묶기 (2)">🔗 벨크로</button>
         <button data-tool="sell" title="장비나 케이블을 클릭하면 바로 판매, 산 값의 50% 환급 (3)">💰 판매</button>
       </div>
     </nav>

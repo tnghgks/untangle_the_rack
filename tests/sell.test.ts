@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
-import { POST_X, POST_Z, strap } from '../src/cable/velcro';
 import { CABLES, DEVICES } from '../src/data/catalog';
 import { priceOf, sellCable, sellDevice } from '../src/game/economy';
 import { parseSave, SAVE_VERSION, type SaveData } from '../src/game/save';
@@ -27,19 +26,15 @@ describe('판매', () => {
     expect(sellCable(s, 0)).toBe(0);
   });
 
-  it('케이블을 없애면 포트가 비고 벨크로·메시도 걷힘', () => {
+  it('케이블을 없애면 포트가 비고 메시도 걷힘', () => {
     const scene = new THREE.Scene();
     const room = createStartRoom(scene, new THREE.Group());
     const c = room.world.cables[0];
     const ports = c.ends.slice();
-    c.rope.pin(20, -POST_X, 0.8, POST_Z - 0.03);
-    c.rope.unpin(20);
-    strap(room.world.cables, -1, 0.8);
     room.removeCable(c);
     expect(room.world.cables).not.toContain(c);
     expect(room.meshes.some((m) => m.cable === c)).toBe(false);
     expect(ports.every((p) => p === null || p.plugged === null)).toBe(true);
-    expect(c.ties).toHaveLength(0);
   });
 
   it('판매로는 옆면 PDU도 뺄 수 있음 (빼기는 여전히 안 됨)', () => {

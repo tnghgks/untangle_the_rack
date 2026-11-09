@@ -3,16 +3,14 @@ import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js
 import { endNode, type Cable, type CableEnd, type CableWorld } from '../cable/cable';
 import type { Vec3 } from '../cable/collide';
 import { MAGNET_RADIUS, SNAP_RADIUS, magnetize, nearestPortOnRay, plug, unplug, type PortHit } from '../cable/plug';
-import { tieAt, untie } from '../cable/velcro';
 import { pickCable } from './pick';
 
 // 케이블 잡기·끌기. 잡은 점은 카메라를 바라보는 평면 위에서 움직이고, 휠로 그 평면을 앞뒤로 민다.
 // 꽂힌 커넥터는 직접 잡고 UNPLUG_PX 넘게 끌어야 뽑힌다 (클릭만으론 안 뽑힘, 10-25). 케이블 가운데를 아무리 당겨도
-// 포트는 안 빠지고 손이 닿는 거리에서 멈춘다. 벨크로에 걸려 있으면 세게 당길 때 벨크로만 떨어진다.
+// 포트는 안 빠지고 손이 닿는 거리에서 멈춘다.
 // 들고 다니기(carry): 상점에서 산 케이블의 한쪽 끝이 버튼을 안 눌러도 커서를 따라오고, 포트 위에서 클릭하면 꽂힌다.
 
 const WHEEL_STEP = 0.02;
-const PULL_OUT = 0.15;
 /** 꽂힌 커넥터를 이만큼(px) 끌어야 뽑힘 */
 const UNPLUG_PX = 6;
 /** 들고 다니기 중인 끌기의 pointerId (실제 포인터가 아님) */
@@ -23,18 +21,16 @@ export interface CableDragDeps {
   camera: THREE.PerspectiveCamera;
   controls: OrbitControls;
   world: CableWorld;
-  /** 손·벨크로 도구일 때 잡는다 */
+  /** 손 도구일 때 잡는다 */
   enabled(): boolean;
   /** 끄는 커넥터 근처의 포트 표시 (null = 끔) */
   showPortHint(hit: PortHit | null): void;
-  /** 케이블 가운데를 끄는 동안 손이 붙을 자리 (벨크로 도구: 기둥). null이면 손 평면 그대로 */
-  snap?(ray: THREE.Ray): Vec3 | null;
 }
 
 export interface CableDrag {
   /** 지금 끄는 케이블과 잡은 마디 */
   held(): { cable: Cable; node: number } | null;
-  /** 꽂지 않고 놓기 (벨크로를 감은 뒤) */
+  /** 꽂지 않고 놓기 */
   drop(): void;
   /** 케이블 끝을 들고 다니기 시작 (상점에서 산 직후) — 포트 위에서 클릭하면 꽂힘, 빈 곳 클릭·Esc는 내려놓기 */
   carry(cable: Cable, end: CableEnd): void;
@@ -49,7 +45,7 @@ interface Drag {
   pending: { x: number; y: number } | null;
 }
 
-export function createCableDrag({ canvas, camera, controls, world, enabled, showPortHint, snap }: CableDragDeps): CableDrag {
+export function createCableDrag({ canvas, camera, controls, world, enabled, showPortHint }: CableDragDeps): CableDrag {
   const raycaster = new THREE.Raycaster();
   const plane = new THREE.Plane();
   const ndc = new THREE.Vector2();
@@ -88,14 +84,10 @@ export function createCableDrag({ canvas, camera, controls, world, enabled, show
       if (hit?.ok) target = magnetize(hit.hand, hit);
       showPortHint(hit);
     } else {
-      target = snap?.(raycaster.ray) ?? hand;
+      target = hand;
     }
-    // 닿는 거리 밖으로는 못 끈다. 넘친 쪽이 벨크로면 세게 당긴 것으로 보고 떼어 냄 (포트는 안 뽑힘)
-    const { overshoot, anchor } = cable.rope.clampToReach(target);
-    if (overshoot > PULL_OUT) {
-      const t = tieAt(cable, anchor);
-      if (t) untie(cable, t);
-    }
+    // 닿는 거리 밖으로는 못 끈다 (포트는 안 빠짐)
+    cable.rope.clampToReach(target);
     cable.rope.setGrabTarget(target[0], target[1], target[2]);
   };
 

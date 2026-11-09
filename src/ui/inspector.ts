@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import { deviceRings, hooksAt } from '../cable/manager';
+import { deviceRings } from '../cable/manager';
 import { events } from '../core/events';
 import type { PowerStatus } from '../game/power';
 import { DEVICE_DEPTH, DEVICE_WIDTH, PDU_LAYOUT, type Device } from '../rack/device';
@@ -95,12 +95,11 @@ export function createInspector({ root, canvas, camera, controls, room, onRemove
   /** 케이블 매니저: 전기·포트 없이 고리만 */
   const renderManager = (d: Device): string => {
     const rings = deviceRings(d);
-    const hooked = rings.reduce((n, r) => n + hooksAt(room.world.cables, r.id).length, 0);
     return `
       <div class="head"><b>${d.def.name}</b> <small>${d.u !== null ? `U${d.u}` : d.side === 0 ? '왼쪽 옆면' : '오른쪽 옆면'}</small><button class="x" data-act="close" aria-label="닫기">×</button></div>
-      <div class="help">${d.u !== null ? '뒷면 고리에 케이블을 끌어 대고 Space로 걸기' : '포트에서 옆으로 끌어 위쪽 고리에 걸었다가 아래 고리로 다시 내려 걸면 남는 선이 덕트를 따라 정리돼요'} · 고리를 클릭하면 빼기</div>
-      <div class="line">고리 ${rings.length}개 · 걸린 선 ${hooked}가닥</div>
-      ${d.u !== null ? '<div class="acts"><button class="act" data-act="remove" title="랙에서 빼서 다른 칸에 끼움 (걸린 선은 풀림)">빼기</button></div>' : ''}
+      <div class="help">선을 정리할 때 쓰는 고리예요</div>
+      <div class="line">고리 ${rings.length}개</div>
+      ${d.u !== null ? '<div class="acts"><button class="act" data-act="remove" title="랙에서 빼서 다른 칸에 끼움">빼기</button></div>' : ''}
     `;
   };
 

@@ -86,6 +86,16 @@ describe('save', () => {
     expect(fromOld.world.cables[2].rope.length).toBeCloseTo(2, 3);
   });
 
+  it('옛 ties 저장도 불러옴', () => {
+    const room = startRoom();
+    const data = toSave(room);
+    data.cables[0] = { ...data.cables[0], ties: [{ node: 10, pos: [0, 1, 0], hook: 'cable-manager#3:ring1' }] };
+    const parsed = parseSave(JSON.stringify(data));
+    expect(parsed).not.toBeNull();
+    const back = restoreRoom(new THREE.Scene(), new THREE.Group(), parsed!);
+    expect(back.world.cables[0].ends.map((p) => p?.id)).toEqual(room.world.cables[0].ends.map((p) => p?.id));
+  });
+
   it('깨진 저장은 무시', () => {
     expect(parseSave(null)).toBeNull();
     expect(parseSave('{oops')).toBeNull();

@@ -161,7 +161,7 @@ export class Rope {
     let overshoot = 0;
     let anchor = -1;
     if (g < 0) return { overshoot, anchor };
-    // 양쪽에서 가장 가까운 고정점만 — 그 너머 고정점(벨크로 건너 꽂힌 끝)은 당겨지지 않는다
+    // 양쪽에서 가장 가까운 고정점만 — 그 너머 고정점은 당겨지지 않는다
     let lo = g, hi = g;
     while (lo >= 0 && !this.pinned[lo]) lo--;
     while (hi < this.n && !this.pinned[hi]) hi++;
