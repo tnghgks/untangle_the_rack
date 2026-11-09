@@ -14,7 +14,8 @@
 
 - 헤드리스 로직(`src/cable`, `src/game`)은 Three.js를 import하지 않는다. 테스트는 `tests/*.test.ts` (vitest), 실행 `npx vitest run`.
 - 각 태스크 끝: `npx vitest run` 전부 통과 + `npm run build` 통과.
-- 케이블 2m 고정(`CABLE_DEFAULT_LENGTH`), 케이블끼리 충돌 없음, 해금 없음.
+- 케이블 2m 고정(`CABLE_DEFAULT_LENGTH`), 케이블끼리 충돌 없음, 해금 없음. 단, 가이드 경로에 든 선은 2m 제한을 받지 않는다 (사용자 11-09 결정 — 2m 안 경로를 우선하고, 없으면 놓은 가이드 하나만 지나는 가장 짧은 경로).
+- 장비 옮기기·저장 복원 시 `routeWith`도 길이 때문에 실패하지 않는다.
 - 가격·수익 수치는 건드리지 않는다 (매니저 100원 ×1.25 그대로).
 - UI·안내 문구·주석은 한국어. 묶는 순간 화면에 글씨를 띄우지 않는다 (안내 바 문구도 묶을 때는 내지 않음).
 - 사용자 저장(localStorage `untangle_the_rack.save`, `SAVE_VERSION` 1)이 깨지면 안 된다 — 옛 `ties`가 있어도 불러와져야 함.
@@ -23,7 +24,7 @@
 
 ## Review Focus
 
-1. 2m로 닿지 않는 높이(예: 시작 방 + U40 매니저)에 놓기 → 거절(빨간 깜빡임), 선은 늘어진 그대로, 예외 없음. → Task 4 테스트 `U40 매니저는 거절`
+1. 2m로 닿지 않는 높이(예: 시작 방 + U40 매니저)에 놓기 → **그래도 경로에 들어감**(사용자 11-09 결정: 가이드에 넣은 선은 2m 제한 없음). 2m 안 경로가 있으면 그쪽을 우선. → Task 4 테스트 `U40 매니저도 경로가 나옴`
 2. 한쪽만 꽂힌(또는 안 꽂힌) 선을 가이드에 놓기 → 거절. → Task 5 테스트 `양 끝이 꽂혀야 경로에 들어감`
 3. 묶인 선이 지나는 매니저를 팔기 → 그 선들은 늘어진 로프로 돌아가고 전력 감소가 사라짐, 남은 매니저를 지나던 다른 선은 그대로. → Task 5 테스트 `가이드를 빼면 그 가이드를 지나던 선만 풀림`
 4. 옛 저장(벨크로 `ties`, `hook` 포함) 불러오기 → 장비·돈·꽂힘 유지, 선은 늘어진 상태. → Task 5 테스트 `옛 ties 저장도 불러옴`
@@ -91,14 +92,15 @@
   - `export function routePath(a: Port, b: Port, seq: readonly Guide[], lanes?: readonly LaneOffset[]): Vec3[]` — 꺾은선: `a.pos` → `a.pos + a.dir*STUB` → 각 가이드마다 [들어가는 점, 나가는 점] → `b.pos + b.dir*STUB` → `b.pos`. 들어가는/나가는 점은 가이드 선분 위에서 앞·뒤 점에 가장 가까운 점(선분으로 clamp). `lanes[k]`가 있으면 k번째 가이드 안의 두 점에 그 오프셋을 더함.
   - `export interface LaneOffset { d: [number, number] }` — 가이드 축에 수직인 두 방향(가로 가이드: [y, z], 세로 가이드: [x, z]) 오프셋 m.
   - `export function pathLength(pts: readonly Vec3[]): number`
-  - `export function findRoute(a: Port, b: Port, guides: readonly Guide[], dropped: string, maxLen: number): Guide[] | null` — `dropped`를 포함하는 서로 다른 가이드 1~`MAX_GUIDES`개의 모든 순서를 훑어, `pathLength(routePath(...)) * REACH_SLACK <= maxLen`인 것 중 점수 최소. 점수 = 전체 길이 + `FREE_WEIGHT` × (가이드 밖 구간 길이, 즉 STUB 이후 가이드 사이·포트까지 구간 합). 없으면 null. (점수 덕에 가이드를 더 많이 지나는 사진 같은 경로가 고름)
+  - `export function findRoute(a: Port, b: Port, guides: readonly Guide[], dropped: string, maxLen: number): Guide[] | null` — `dropped`를 포함하는 서로 다른 가이드 1~`MAX_GUIDES`개의 모든 순서를 훑어, `pathLength(routePath(...)) * REACH_SLACK <= maxLen`인 것 중 점수 최소. 점수 = 전체 길이 + `FREE_WEIGHT` × (가이드 밖 구간 길이, 즉 STUB 이후 가이드 사이·포트까지 구간 합). 2m 안 후보가 하나도 없으면 길이를 무시하고 `[dropped]` 단독 경로를 돌려준다 (사용자 결정: 어디든 허용). 가이드 목록에 `dropped`가 없을 때만 null. (점수 덕에 가이드를 더 많이 지나는 사진 같은 경로가 고름)
   - `export function laneOffset(k: number, tight: number, radius: number): LaneOffset` — k번째 차선. 촘촘(tight=1): 간격 `2*radius + 0.001`, 4줄씩 쌓은 격자. 느슨(tight=0): 간격 0.014. 사이는 선형 보간. 묶이지 않은 구간의 "살짝 구불거림"은 Task 5의 마디 배치에서 진폭 `WOBBLE = 0.008 × (1 - tight)`로 더한다.
 
 - [ ] **Step 1:** 테스트 헬퍼: `createStartRoom(new THREE.Scene(), new THREE.Group())` + `room.install('cable-manager', u)` → `guideOf(manager)`. 케이블 3가닥의 `ends[0]!`, `ends[1]!`.
 - [ ] **Step 2:** 실패하는 테스트들:
   - `시작 방 3가닥 모두 U2·U5·U10·U15 매니저로 경로가 나옴`: 각 u마다 3가닥 모두 `findRoute(..., [g], g.id, 2.0)`가 `[g]`.
-  - `U40 매니저는 거절`: `findRoute`가 null.
-  - `경로는 포트에서 시작해 포트에서 끝남`: `routePath` 첫 점 = `a.pos`, 끝 점 = `b.pos`, 길이 × 1.02 ≤ 2.
+  - `U40 매니저도 경로가 나옴`: `findRoute`가 `[g]` (2m 넘는 경로라도).
+  - `2m 안 경로가 있으면 그쪽을 고름`: U5 + U40 가로 매니저, U5에 놓으면 결과에 U40이 안 들어감.
+  - `경로는 포트에서 시작해 포트에서 끝남`: `routePath` 첫 점 = `a.pos`, 끝 점 = `b.pos`, (U5 매니저일 때) 길이 × 1.02 ≤ 2.
   - `세로 매니저가 있으면 가로 매니저에 놓아도 더 가이드 안을 많이 지나는 경로를 고름`: 시작 방 + U20 가로 매니저 + 세로 매니저(`room.addSide('cable-manager-v')`), PDU 전원선을 가로에 놓으면 결과에 두 가이드가 다 들어 있거나(닿으면) 가로 하나 — 어느 쪽이든 결과 경로의 `FREE_WEIGHT` 점수가 `[가로]` 단독보다 작거나 같음.
   - `laneOffset 차선끼리 안 겹침`: k=0..7, tight=1, radius 0.003 → 서로 거리 ≥ 0.006.
 - [ ] **Step 3:** `npx vitest run tests/route.test.ts` → FAIL (모듈 없음).
@@ -120,7 +122,7 @@
   - `export function tidyDegree(r: Route | null): number` (`route.ts`) — `r ? r.tied.filter(g => r.guides.includes(g)).length / r.guides.length : 0`
   - `Room.guides(): Guide[]` — 설치된 매니저들의 `guideOf`.
   - `Room.routeCable(cable: Cable, guideId: string): boolean` — 양 끝이 꽂혀 있고 `findRoute`가 있으면 `cable.route = { guides, tied: [] }`, 경로가 바뀐 가이드들 `relayout`, `events.emit('cable:routed', { cableId })`, true. 아니면 false (상태 그대로).
-  - `Room.routeWith(cable: Cable, guideIds: readonly string[], tied: readonly string[]): boolean` — 저장·옮기기 복원용: 그 가이드 순서 그대로 경로 길이만 검사.
+  - `Room.routeWith(cable: Cable, guideIds: readonly string[], tied: readonly string[]): boolean` — 저장·옮기기 복원용: 그 가이드 순서 그대로 경로를 깖. 양 끝이 꽂혀 있고 가이드가 모두 있으면 true (길이 검사 없음).
   - `Room.unroute(cable: Cable): void` — `route = null`, `rope.frozen = false`, `wake()`, 그 가이드들 `relayout`, `events.emit('cable:unrouted', { cableId })`. route가 없으면 아무것도 안 함.
   - `Room.tieGuide(guideId: string): Cable[]` — 그 가이드를 지나고 아직 그 가이드가 `tied`에 없는 선들에 추가, 돌려줌. 하나라도 있으면 `relayout(guideId)`·`events.emit('cable:tied', { guideId, cableIds })`.
   - `Room.relayout(guideId?: string, tight?: ReadonlyMap<string, number>): void` — 해당(없으면 모든) 가이드를 지나는 경로 선들의 마디를 다시 깖. 차선 k = 그 가이드를 지나는 선들 중 `world.cables` 순서상 몇 번째. 가이드별 tight = `tight?.get(guideId) ?? (그 선이 그 가이드에 묶였으면 1, 아니면 0)`. 마디 = `rope.setPath(routePath(a, b, seq, lanes))` + 묶이지 않은 가이드 구간 마디에 진폭 `WOBBLE × (1 - tight)` 사인 흔들림(주기 0.25m).
@@ -154,14 +156,14 @@
   - `drag.ts` deps에 `onGrab?(cable: Cable): void` (잡는 순간, `rope.grab` 전에 호출 — main은 `room.unroute`를 넘김: 경로에 든 선을 잡으면 빠져나와 다시 끌 수 있음) 와 `onRelease?(cable: Cable, ray: THREE.Ray): boolean` (커넥터가 아닌 가운데를 끌다 놓을 때 `finish(true)`에서 호출, true면 처리됨).
   - `createGuideTool(deps: { canvas; camera; scene: THREE.Scene; room: Room; drag(): CableDrag; active(): boolean }): { onRelease(cable: Cable, ray: THREE.Ray): boolean; sync(): void; rayToGuide(ray: THREE.Ray): Guide | null }`
     - `rayToGuide`: 광선과 가이드 선분 사이 거리 ≤ `max(0.04, t × 0.035)`인 것 중 각도 최소.
-    - `sync()` (매 프레임): 손에 든 선이 있고 커서 광선이 가이드 위면 그 가이드 강조(emissive 0x2d6cdf, 매니저 메시 `userData.deviceId`로 찾음) + `findRoute` 결과를 점선(`THREE.LineDashedMaterial`, 0x8cc8ff)으로 미리보기. 경로가 없으면 강조만 빨강(0x8a1c1c).
-    - `onRelease`: 가이드 위면 `room.routeCable`; 실패하면 가이드 300ms 빨강 깜빡임 + false(선은 그 자리에서 다시 물리로). 가이드 위가 아니면 false.
+    - `sync()` (매 프레임): 손에 든 선이 있고 커서 광선이 가이드 위면 그 가이드 강조(emissive 0x2d6cdf, 매니저 메시 `userData.deviceId`로 찾음) + `findRoute` 결과를 점선(`THREE.LineDashedMaterial`, 0x8cc8ff)으로 미리보기. 경로가 없으면(양 끝이 다 꽂혀 있지 않음) 강조만 빨강(0x8a1c1c).
+    - `onRelease`: 가이드 위면 `room.routeCable`; 실패(양 끝이 다 꽂혀 있지 않음)하면 가이드 300ms 빨강 깜빡임 + false(선은 그 자리에서 다시 물리로). 가이드 위가 아니면 false.
   - 장비 끌어 옮기기: `MovingDevice.plugs[]`에 `route: Route | null` 추가(뺄 때 잡아 둠). `reinstall`에서 꽂은 뒤 `route`가 있으면 `room.routeWith(cable, route.guides, route.tied)`.
   - 문구: 설치 안내 "🧷 케이블 매니저 설치 · 늘어진 선을 끌어다 매니저에 놓으면 정리돼요", hud 가이드 줄에서 기둥 벨크로·Space 설명 삭제하고 "늘어진 선을 끌어 매니저에 놓기 → 🔗 벨크로로 다발 묶기 → ⚡ 전력이 줄어요", 상점 매니저 meta "선 정리 가이드", inspector 매니저 카드 "지나는 선 N가닥 · 묶음 M가닥".
 
 - [ ] **Step 1:** 구현 (뷰라 자동 테스트 없음 — 로직은 Task 4·5에서 검증됨).
 - [ ] **Step 2:** `npm run build` → 성공, `npx vitest run` → PASS.
-- [ ] **Step 3:** 브라우저 확인 (`npm run dev`, `?debug` — **`?reset` 쓰기 전 사용자 저장을 sessionStorage `userSaveBackup`에 백업하고 끝나면 되돌릴 것**): 시작 방에 매니저 U5 설치 → 선 가운데를 끌어 매니저 위에 대면 파란 강조 + 점선 → 놓으면 선이 경로로 자리 잡음. U40 매니저에 놓으면 빨간 깜빡임 후 늘어진 그대로. 경로에 든 선을 잡으면 빠져나와 끌림. 서버를 끌어 옮긴 뒤 경로 유지.
+- [ ] **Step 3:** 브라우저 확인 (`npm run dev`, `?debug` — **`?reset` 쓰기 전 사용자 저장을 sessionStorage `userSaveBackup`에 백업하고 끝나면 되돌릴 것**): 시작 방에 매니저 U5 설치 → 선 가운데를 끌어 매니저 위에 대면 파란 강조 + 점선 → 놓으면 선이 경로로 자리 잡음. U40 매니저에 놓아도 경로로 들어감. 한쪽만 꽂힌 선을 놓으면 빨간 깜빡임 후 늘어진 그대로. 경로에 든 선을 잡으면 빠져나와 끌림. 서버를 끌어 옮긴 뒤 경로 유지.
 - [ ] **Step 4:** Commit `Drag slack onto a guide to route it`
 
 ### Task 7: 벨크로로 묶기 연출과 전력 반짝
