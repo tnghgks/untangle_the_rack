@@ -124,6 +124,23 @@ describe('경로에 넣기·묶기·풀기', () => {
     }
   });
 
+  it('묶는 연출의 tight 덮어쓰기는 안 묶인 선에만 — 묶인 선 마디는 그대로', () => {
+    const { room, g } = roomWithGuide();
+    const [c0, c1, c2] = room.world.cables as [Cable, Cable, Cable];
+    room.routeCable(c0, g.id);
+    room.routeCable(c1, g.id);
+    expect(room.tieGuide(g.id)).toEqual([c0, c1]);
+    room.routeCable(c2, g.id);
+    const before = [c0, c1].map((c) => guideNodes(c, g));
+    const loose = guideNodes(c2, g);
+    room.relayout(g.id, new Map([[g.id, 1]]));
+    const c2Tight = guideNodes(c2, g);
+    room.relayout(g.id, new Map([[g.id, 0]]));
+    expect([c0, c1].map((c) => guideNodes(c, g))).toEqual(before);
+    expect(guideNodes(c2, g)).toEqual(loose);
+    expect(c2Tight).not.toEqual(loose); // 안 묶인 선은 덮어쓰기를 따름
+  });
+
   it('가이드를 빼면 그 가이드를 지나던 선만 풀림', () => {
     const room = newRoom();
     const m5 = room.install('cable-manager', 5)!;

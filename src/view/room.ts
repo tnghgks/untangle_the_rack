@@ -285,7 +285,8 @@ export class Room {
 
   /**
    * 그 가이드(없으면 모든 가이드)를 지나는 경로 선들의 마디를 다시 깖.
-   * 차선 k = 그 가이드를 지나는 선 중 world.cables 순서상 몇 번째. tight: 가이드 id → 0..1 (없으면 묶였으면 1, 아니면 0)
+   * 차선 k = 그 가이드를 지나는 선 중 world.cables 순서상 몇 번째. tight: 가이드 id → 0..1 — 그 가이드에서 아직 안 묶인 선에만
+   * 적용 (묶는 연출). 이미 묶인 선은 늘 1, 그 밖엔 0
    */
   relayout(guideId?: string, tight?: ReadonlyMap<string, number>): void {
     const byId = new Map(this.guides().map((g) => [g.id, g]));
@@ -296,7 +297,7 @@ export class Room {
       if (!a || !b || (guideId !== undefined && !route.guides.includes(guideId))) continue;
       const seq = route.guides.map((id) => byId.get(id));
       if (seq.some((g) => !g)) continue;
-      const tights = route.guides.map((id) => tight?.get(id) ?? (route.tied.includes(id) ? 1 : 0));
+      const tights = route.guides.map((id) => (route.tied.includes(id) ? 1 : tight?.get(id) ?? 0));
       const lanes: LaneOffset[] = route.guides.map((id, i) => {
         const k = routed.filter((x) => x.route!.guides.includes(id)).indexOf(c);
         return laneOffset(k, tights[i]!, c.rope.cfg.radius);

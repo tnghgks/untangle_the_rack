@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { Vec3 } from '../cable/collide';
+import type { Cable } from '../cable/cable';
 import type { Guide } from '../cable/guide';
 import { deviceRings } from '../cable/manager';
 import { laneOffset, routePath } from '../cable/route';
@@ -125,7 +126,11 @@ interface Anim {
   guideId: string;
   /** 지난 시간 ms */
   t: number;
-  /** 모이기가 끝나 띠가 감기는 중 */
+  /** 묶을 선 (클릭 때 그 가이드를 지나면서 아직 안 묶인 선) — 실제 묶기는 모이기가 끝날 때 */
+  pending: Cable[];
+  /** 이 가이드에 이미 띠가 있었음 → 띠는 그대로 두고(숨기지 않음) 커지는 연출 없이 반짝만 */
+  hadStraps: boolean;
+  /** 모이기가 끝나 묶었음 (띠가 감기는 중) */
   strapped: boolean;
 }
 
@@ -192,9 +197,9 @@ export function createTieTool({ canvas, camera, scene, room, guides, active, onT
           : new THREE.Matrix4().makeBasis(new THREE.Vector3(1, 0, 0), new THREE.Vector3(0, 0, 1), new THREE.Vector3(0, -1, 0));
         mesh.quaternion.setFromRotationMatrix(basis);
         mesh.position.set(spot.center[0], spot.center[1], spot.center[2]);
-        // 연출 중인 가이드는 모이기가 끝날 때까지 숨김
+        // 처음 묶은 가이드의 띠만 0에서 커짐 (이미 있던 띠는 연출 중에도 그대로)
         const anim = anims.get(g.id);
-        if (anim) mesh.scale.x = anim.strapped ? growOf(anim) : 0;
+        if (anim?.strapped && !anim.hadStraps) mesh.scale.x = growOf(anim);
         mesh.visible = mesh.scale.x > 0;
         scene.add(mesh);
         straps.push({ guideId: g.id, mesh });
@@ -248,6 +253,10 @@ export function createTieTool({ canvas, camera, scene, room, guides, active, onT
     return best;
   };
 
+  /** 그 가이드를 지나면서 아직 그 가이드에서 안 묶인 선 */
+  const untiedOn = (guideId: string): Cable[] =>
+    room.world.cables.filter((c) => c.route?.guides.includes(guideId) && !c.route.tied.includes(guideId));
+
   // 케이블 끌기보다 먼저 받아야 하므로 window 캡처 단계 (main.ts에서 케이블 끌기 앞에 등록).
   // 묶을 다발이 아니면 그대로 흘려보내 손처럼 끌 수 있다
   window.addEventListener(
@@ -258,10 +267,11 @@ export function createTieTool({ canvas, camera, scene, room, guides, active, onT
       if (!g) return;
       e.preventDefault();
       e.stopImmediatePropagation();
-      // 이미 다 묶인 다발이면 아무 일 없음 (끌기도 시작하지 않음)
-      if (room.tieGuide(g.id).length === 0) return;
-      anims.set(g.id, { guideId: g.id, t: 0, strapped: false });
-      dirty = true;
+      // 연출 중이거나 이미 다 묶인 다발이면 아무 일 없음 (끌기도 시작하지 않음)
+      if (anims.has(g.id)) return;
+      const pending = untiedOn(g.id);
+      if (pending.length === 0) return;
+      anims.set(g.id, { guideId: g.id, t: 0, pending, hadStraps: strapSpots(room, g.id).length > 0, strapped: false });
     },
     { capture: true },
   );
@@ -274,22 +284,32 @@ export function createTieTool({ canvas, camera, scene, room, guides, active, onT
       const dtMs = dtSec * 1000;
       for (const a of [...anims.values()]) {
         a.t += dtMs;
-        if (!room.guides().some((g) => g.id === a.guideId)) {
-          anims.delete(a.guideId); // 연출 중에 매니저가 빠짐
-          continue;
-        }
         if (!a.strapped) {
+          // 연출 중에 매니저가 빠졌거나 묶을 선이 모두 경로에서 빠짐 → 소리·보상 없이 조용히 그만
+          const still = untiedOn(a.guideId);
+          if (!room.guides().some((g) => g.id === a.guideId) || !a.pending.some((c) => still.includes(c))) {
+            anims.delete(a.guideId);
+            continue;
+          }
           if (a.t < TIE_ANIM_MS) {
+            // 아직 안 묶인 선만 모임 (이미 묶인 선은 relayout이 늘 tight 1로)
             room.relayout(a.guideId, new Map([[a.guideId, easeOut(a.t / TIE_ANIM_MS)]]));
             continue;
           }
-          // 모이기 끝: 묶인 모양으로 고정하고 띠를 감기 시작
+          // 모이기 끝: 이제 묶음 → 전력 감소·띠·반짝·소리·HUD가 같은 순간에
           a.strapped = true;
-          room.relayout(a.guideId);
-          if (dirty) rebuild();
+          if (room.tieGuide(a.guideId).length === 0) {
+            anims.delete(a.guideId);
+            continue;
+          }
+          rebuild();
           for (const s of straps) if (s.guideId === a.guideId) sparkleAt(s.mesh.position);
           playTie();
           onTied();
+        }
+        if (a.hadStraps) {
+          anims.delete(a.guideId);
+          continue;
         }
         const k = growOf(a);
         for (const s of straps) {
