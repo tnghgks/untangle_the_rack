@@ -8,6 +8,7 @@ import { createStartRoom, restoreRoom } from './view/room';
 import { createPowerButtons } from './view/powerButton';
 import { createHover } from './view/hover';
 import { createDeviceDrag } from './view/deviceDrag';
+import { createGuideTool } from './view/guide';
 import { endNode } from './cable/cable';
 import { plug } from './cable/plug';
 import { canReach } from './cable/reach';
@@ -92,6 +93,10 @@ const reinstall = (id: DeviceDefId, u: number, moving: MovingDevice) => {
       const port = device.ports.find((x) => x.id === p.portId);
       if (port && canReach(p.cable, endNode(p.cable, p.end), port.pos) && plug(p.cable, p.end, port)) kept++;
     }
+    // 다 꽂은 뒤 경로를 되살림 (양 끝이 이 장비에 있는 선도 두 끝이 다 꽂힌 다음에)
+    for (const { cable, route } of moving.plugs) {
+      if (route && !cable.route) room.routeWith(cable, route.guides, route.tied);
+    }
     const lost = moving.plugs.length - kept;
     flashHint(
       `${DEVICES[id].name}: ${u === moving.u ? `U${u} 그대로` : `U${u} 칸으로 옮김`}` +
@@ -129,6 +134,15 @@ createSellTool({
   },
 });
 createPowerButtons(canvas, stage.camera, rig.controls, room);
+// 선 가운데를 끌어 케이블 매니저 위에 놓으면 경로에 듦 (끄는 동안 강조·점선 미리보기)
+const guideTool = createGuideTool({
+  canvas,
+  camera: stage.camera,
+  scene: stage.scene,
+  room,
+  drag: () => cableDrag,
+  active: () => tool === 'hand' || tool === 'velcro',
+});
 const cableDrag = createCableDrag({
   canvas,
   camera: stage.camera,
@@ -136,6 +150,9 @@ const cableDrag = createCableDrag({
   world: room.world,
   enabled: () => tool === 'hand' || tool === 'velcro',
   showPortHint: room.showPortHint,
+  // 경로에 든 선을 잡으면 빠져나와 다시 끌 수 있음
+  onGrab: (cable) => room.unroute(cable),
+  onRelease: guideTool.onRelease,
 });
 // 장비 몸체를 끌면 랙에서 빼서 든 채로 → 떼는 칸에 끼움. 케이블 끌기 뒤(케이블이 먼저), 정보 카드 앞
 createDeviceDrag({
@@ -145,7 +162,12 @@ createDeviceDrag({
   active: () => tool === 'hand' || tool === 'velcro',
   busy: () => placement.held !== null,
   start(device) {
-    const plugs = device.ports.flatMap((p) => (p.plugged ? [{ ...p.plugged, portId: p.id }] : []));
+    // 경로는 room.remove가 풀기 전에 잡아 둠
+    const plugs = device.ports.flatMap((p) => {
+      if (!p.plugged) return [];
+      const { route } = p.plugged.cable;
+      return [{ ...p.plugged, portId: p.id, route: route && { guides: [...route.guides], tied: [...route.tied] } }];
+    });
     const moving: MovingDevice = { id: device.id, u: device.u!, on: device.on, plugs };
     inspector.close();
     if (!room.remove(device)) return;
@@ -181,7 +203,7 @@ events.on('placement:held', (id) => {
 events.on('device:installed', ({ deviceId }) =>
   flashHint(
     room.device(deviceId)?.def.rings
-      ? '🧷 케이블 매니저 설치'
+      ? '🧷 케이블 매니저 설치 · 늘어진 선을 끌어다 매니저에 놓으면 정리돼요'
       : '설치 완료 · 뒷면에서 전원선·랜선을 연결하고 앞면 전원 버튼을 누르세요',
   ),
 );
@@ -236,6 +258,9 @@ const advance = () => {
 // 배선·전원·설치가 바뀌면 바로 LED·수익에 반영
 events.on('cable:plugged', advance);
 events.on('cable:unplugged', advance);
+// 경로에 들고 빠지면 정리 보상(전력 감소)이 바뀜
+events.on('cable:routed', advance);
+events.on('cable:unrouted', advance);
 events.on('device:power', advance);
 events.on('device:installed', advance);
 events.on('device:removed', advance);
@@ -290,6 +315,7 @@ startLoop({
     hud.setModel({ money: state.money, ...room.summary, incomePerSec: room.incomePerSec, pduWarn: pduWarn() });
     inspector.update();
     room.sync(performance.now() / 1000);
+    guideTool.sync();
     stage.renderer.render(stage.scene, stage.camera);
 
     if (debug) {

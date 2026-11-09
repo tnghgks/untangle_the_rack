@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
-import type { Cable, CableEnd } from '../cable/cable';
+import type { Cable, CableEnd, Route } from '../cable/cable';
 import { events } from '../core/events';
 import { DEVICES, type DeviceDefId } from '../data/catalog';
 import { RACK, RACK_HEIGHT, U } from '../data/units';
@@ -33,8 +33,8 @@ export interface MovingDevice {
   id: string;
   u: number;
   on: boolean;
-  /** 끌어 옮길 때: 뺄 때 꽂혀 있던 케이블 — 끼운 뒤 닿으면 같은 포트에 다시 꽂음 */
-  plugs?: { cable: Cable; end: CableEnd; portId: string }[];
+  /** 끌어 옮길 때: 뺄 때 꽂혀 있던 케이블과 그 경로 — 끼운 뒤 닿으면 같은 포트에 다시 꽂고 경로도 되살림 */
+  plugs?: { cable: Cable; end: CableEnd; portId: string; route: Route | null }[];
 }
 
 export interface Placement {
