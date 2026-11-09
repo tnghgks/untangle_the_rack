@@ -9,6 +9,7 @@ import { createPowerButtons } from './view/powerButton';
 import { createHover } from './view/hover';
 import { createDeviceDrag } from './view/deviceDrag';
 import { createGuideTool } from './view/guide';
+import { createTieTool } from './view/tie';
 import { endNode } from './cable/cable';
 import { plug } from './cable/plug';
 import { canReach } from './cable/reach';
@@ -62,7 +63,7 @@ const buy = (id: DeviceDefId): boolean => {
   return true;
 };
 
-// 입력 우선순위는 등록 순서: 장비 들기 → 판매 → 전원 버튼 → 케이블 드래그(손) → 장비 끌기 → 장비 정보 카드 → OrbitControls
+// 입력 우선순위는 등록 순서: 장비 들기 → 판매 → 전원 버튼 → 벨크로 묶기 → 케이블 드래그(손) → 장비 끌기 → 장비 정보 카드 → OrbitControls
 const placement = createPlacement({
   canvas,
   camera: stage.camera,
@@ -112,6 +113,7 @@ let tool: ToolId = 'hand';
 events.on('tool:set', (t) => {
   tool = t;
   if (t === 'sell') flashHint('💰 판매: 장비나 케이블을 클릭하면 바로 팔아요 (산 값의 50%) · 1 손으로 돌아가기');
+  if (t === 'velcro') flashHint('🔗 벨크로: 매니저에 들어간 다발을 클릭하면 묶여요');
 });
 // 판매는 전원 버튼·케이블 끌기·정보 카드보다 먼저 — 클릭 즉시 판다
 createSellTool({
@@ -142,6 +144,20 @@ const guideTool = createGuideTool({
   room,
   drag: () => cableDrag,
   active: () => tool === 'hand' || tool === 'velcro',
+});
+// 벨크로: 경로에 든 다발을 클릭하면 묶음 (케이블 끌기보다 먼저 — 묶을 다발이 아니면 손처럼 끌림).
+// 묶는 순간 글씨는 띄우지 않고 전력 칸만 반짝
+const tieTool = createTieTool({
+  canvas,
+  camera: stage.camera,
+  scene: stage.scene,
+  room,
+  guides: guideTool,
+  active: () => tool === 'velcro',
+  onTied() {
+    advance();
+    hud.pulsePower();
+  },
 });
 const cableDrag = createCableDrag({
   canvas,
@@ -186,7 +202,14 @@ const inspector = createInspector({
     placement.hold(device.def.id, moving);
   },
 });
-createHover({ canvas, camera: stage.camera, room, busy: () => placement.held !== null, tool: () => tool });
+createHover({
+  canvas,
+  camera: stage.camera,
+  room,
+  busy: () => placement.held !== null,
+  tool: () => tool,
+  cursorAt: tieTool.cursorAt,
+});
 
 let hintTimer = 0;
 const flashHint = (text: string) => {
@@ -308,12 +331,15 @@ startLoop({
   },
   render() {
     const now = Date.now();
-    rig.update((now - lastRealMs) / 1000);
+    const dtSec = (now - lastRealMs) / 1000;
+    rig.update(dtSec);
     placement.refresh();
     lastRealMs = now;
     advance();
     hud.setModel({ money: state.money, ...room.summary, incomePerSec: room.incomePerSec, pduWarn: pduWarn() });
     inspector.update();
+    // 묶는 연출이 마디를 먼저 옮겨야 같은 프레임 메시에 반영됨
+    tieTool.sync(dtSec);
     room.sync(performance.now() / 1000);
     guideTool.sync();
     stage.renderer.render(stage.scene, stage.camera);

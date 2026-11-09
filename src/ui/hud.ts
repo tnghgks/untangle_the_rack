@@ -22,6 +22,8 @@ export interface Hud {
   setHint(text: string | null): void;
   /** 개발용 성능 표시 (왼쪽 아래). 처음 호출될 때 나타남 */
   setDebug(text: string): void;
+  /** 전력 칸을 잠깐 밝혔다 돌림 (묶어서 전력이 줄었을 때) */
+  pulsePower(): void;
 }
 
 const LED_HELP: [LedState, string][] = [
@@ -62,6 +64,9 @@ const GUIDE_HTML = `
   </ul>
 `;
 
+/** 전력 칸 강조 시간 (styles.css power-pulse와 같게) */
+const PULSE_MS = 400;
+
 /** 새 게임 버튼 → 확인 뒤 onNewGame. guideOpen: 처음 시작이면 가이드를 펼친 채로 */
 export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = false): Hud {
   root.innerHTML = `
@@ -84,7 +89,7 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
       </div>
       <div class="group" role="group" aria-label="도구">
         <button class="on" data-tool="hand" title="케이블 잡아 끌기·꽂기 (1)">✋ 손</button>
-        <button data-tool="velcro" title="케이블 묶기 (2)">🔗 벨크로</button>
+        <button data-tool="velcro" title="경로에 든 다발을 클릭해 묶기 (2)">🔗 벨크로</button>
         <button data-tool="sell" title="장비나 케이블을 클릭하면 바로 판매, 산 값의 50% 환급 (3)">💰 판매</button>
       </div>
     </nav>
@@ -111,6 +116,7 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
   setGuide(guideOpen);
   const debug = root.querySelector<HTMLElement>('.hud-debug')!;
   const hint = root.querySelector<HTMLElement>('.hud-hint')!;
+  let pulseTimer = 0;
 
   const viewButtons = root.querySelectorAll<HTMLButtonElement>('[data-view]');
   viewButtons.forEach((b) => b.addEventListener('click', () => events.emit('view:set', b.dataset.view as ViewMode)));
@@ -141,6 +147,14 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
       power.textContent = `⚡ ${m.powerUsed.toLocaleString('ko-KR')} / ${m.powerCap.toLocaleString('ko-KR')}W`;
       warn.hidden = m.pduWarn === null;
       warn.textContent = m.pduWarn ?? '';
+    },
+    pulsePower() {
+      // 연달아 묶으면 처음부터 다시 (클래스를 뺐다가 다시 붙여 애니메이션을 재시작)
+      power.classList.remove('pulse');
+      void power.offsetWidth;
+      power.classList.add('pulse');
+      clearTimeout(pulseTimer);
+      pulseTimer = window.setTimeout(() => power.classList.remove('pulse'), PULSE_MS);
     },
     setDebug(text) {
       debug.hidden = false;
