@@ -22,6 +22,8 @@ export interface PowerDevice {
   role: PowerRole;
   on: boolean;
   watts: number;
+  /** 정리 보상: 정격 대비 줄어드는 전력 비율 (0~1). 실제 소비는 effectiveWatts */
+  saving: number;
   incomePerSec: number;
   /** PDU 공급 용량 W */
   capacity: number;
@@ -58,6 +60,11 @@ export function updatePower(devices: readonly PowerDevice[], links: ReadonlyMap<
     if (over.length === 0) return summary;
     for (const d of over) d.tripped = true;
   }
+}
+
+/** saving을 뺀 실제 소비 W */
+export function effectiveWatts(d: PowerDevice): number {
+  return d.watts * (1 - d.saving);
 }
 
 export function resetBreaker(pdu: PowerDevice): void {
@@ -120,7 +127,7 @@ function evaluate(devices: readonly PowerDevice[], links: ReadonlyMap<string, st
     if (d.role === 'pdu' || !d.on) continue;
     const p = d.ports.find((x) => x.kind === 'power');
     const src = p && peerDevice(p.id);
-    if (src?.role === 'pdu') src.demand += d.watts;
+    if (src?.role === 'pdu') src.demand += effectiveWatts(d);
   }
   for (const d of devices) {
     if (d.role === 'pdu') {
@@ -129,8 +136,8 @@ function evaluate(devices: readonly PowerDevice[], links: ReadonlyMap<string, st
     }
     if (d.status === 'running') summary.incomePerSec += d.incomePerSec;
     if (d.status === 'booting' || d.status === 'nolink' || d.status === 'running') {
-      summary.powerUsed += d.watts;
-      supplier(d)!.load += d.watts;
+      summary.powerUsed += effectiveWatts(d);
+      supplier(d)!.load += effectiveWatts(d);
     }
   }
   return summary;
