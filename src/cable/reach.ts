@@ -5,7 +5,7 @@ import { endNode, type Cable } from './cable';
 import type { Vec3 } from './collide';
 
 /** 고정점까지 이 비율 이상 여유가 있어야 닿음 (딱 맞으면 물리가 떨림) */
-const REACH_SLACK = 1.02;
+export const REACH_SLACK = 1.02;
 
 /** 마디 i를 at에 둘 수 있나: 꽂힌 끝까지 직선거리 × 1.02 ≤ 마디 차 × 마디 길이 */
 export function canReach(cable: Cable, i: number, at: Vec3): boolean {
