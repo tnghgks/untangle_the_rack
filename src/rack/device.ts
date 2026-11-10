@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Port, PortKind } from '../cable/cable';
-import { RING_OUT, RING_R, ringsOf, SIDE_RING_X, SIDE_RING_Z, sideRingsOf } from '../cable/manager';
+import { RING_R, SIDE_RING_X, SIDE_RING_Z } from '../cable/manager';
 import type { Vec3 } from '../cable/collide';
 import { DEVICES, type DeviceDef, type DeviceDefId } from '../data/catalog';
 import { RACK, RACK_HEIGHT, U, uBottomY } from '../data/units';
@@ -142,23 +142,42 @@ export function createRackDevice(id: string, defId: DeviceDefId, u: number): { d
   return { device, sockets };
 }
 
-const RING_TUBE = 0.003;
+/** 매니저 덕트 플라스틱 (장비마다 하나 — 가이드 위 밝힘이 장비별로 emissive를 바꿈) */
+const ductMaterial = (): THREE.MeshStandardMaterial => new THREE.MeshStandardMaterial({ color: 0x1d2024, metalness: 0.15, roughness: 0.7 });
+/** 핑거 덕트 치수 m: 손가락 폭·두께, 덕트 깊이, 손가락 줄의 중심 거리(가이드 축에서), 끝 걸쇠 */
+const DUCT = { fingerW: 0.008, fingerT: 0.007, depth: 0.09, rowOff: 0.026, lip: 0.0065, lipT: 0.004 };
 
-/** 매니저 뒷면 고리: x축을 감싸는 고리(가로로 지나는 선이 통과) + 뒷면에서 나온 짧은 받침. 충돌 상자 아님 */
+function ductPart(g: THREE.Group, id: string, mat: THREE.Material, geo: THREE.BufferGeometry, x: number, y: number, z: number): void {
+  const m = new THREE.Mesh(geo, mat);
+  m.position.set(x, y, z);
+  m.castShadow = true;
+  m.userData.deviceId = id;
+  g.add(m);
+}
+
+/**
+ * 가로 매니저 뒷면: 핑거 덕트. 뒷판 + 위아래 두 줄의 빗살 손가락(랙 뒤 -z로 뻗음, 끝에 안쪽 걸쇠) + 양 끝 막이.
+ * 선은 두 줄 사이 홈(고리 자리 = 가이드)을 따라 가고, 손가락 사이 틈으로 위아래로 드나듦.
+ * 손가락은 고리 x 사이(±2.5cm)에 — 벨크로 띠가 고리 x에 감김. 충돌 상자 아님
+ */
 function addRings(g: THREE.Group, id: string, u: number, xs: readonly number[]): void {
-  const ringGeo = new THREE.TorusGeometry(RING_R, RING_TUBE, 8, 24);
-  const stemGeo = new THREE.BoxGeometry(0.006, 0.004, RING_OUT);
-  for (const ring of ringsOf(id, u, xs)) {
-    const [x, y, z] = ring.pos;
-    const mesh = new THREE.Mesh(ringGeo, new THREE.MeshStandardMaterial({ color: 0x8a929c, metalness: 0.7, roughness: 0.35 }));
-    mesh.rotation.y = Math.PI / 2;
-    mesh.position.set(x, y, z);
-    mesh.userData.ringId = ring.id;
-    g.add(mesh);
-    const stem = new THREE.Mesh(stemGeo, new THREE.MeshStandardMaterial({ color: 0x5a6068, metalness: 0.6, roughness: 0.5 }));
-    stem.position.set(x, y - RING_R, z + RING_OUT / 2);
-    g.add(stem);
+  const mat = ductMaterial();
+  const y = uBottomY(u) + U / 2;
+  const z0 = BACK_Z - 0.002;
+  const zMid = BACK_Z - DUCT.depth / 2;
+  const zTip = BACK_Z - DUCT.depth + DUCT.lipT / 2;
+  ductPart(g, id, mat, new THREE.BoxGeometry(DEVICE_WIDTH, U - 0.002, 0.004), 0, y, z0);
+  const finger = new THREE.BoxGeometry(DUCT.fingerW, DUCT.fingerT, DUCT.depth);
+  const lip = new THREE.BoxGeometry(DUCT.fingerW, DUCT.lip, DUCT.lipT);
+  const lo = Math.min(...xs) - 0.025, hi = Math.max(...xs) + 0.025;
+  for (let x = lo; x <= hi + 1e-9; x += 0.05) {
+    for (const s of [1, -1]) {
+      ductPart(g, id, mat, finger, x, y + s * DUCT.rowOff, zMid);
+      ductPart(g, id, mat, lip, x, y + s * (DUCT.rowOff - DUCT.fingerT / 2 - DUCT.lip / 2), zTip);
+    }
   }
+  const cap = new THREE.BoxGeometry(0.004, 2 * DUCT.rowOff + DUCT.fingerT, DUCT.depth);
+  for (const s of [1, -1]) ductPart(g, id, mat, cap, s * (DEVICE_WIDTH / 2 - 0.002), y, zMid);
 }
 
 /**
@@ -166,7 +185,7 @@ function addRings(g: THREE.Group, id: string, u: number, xs: readonly number[]):
  * 치수는 함수 안에서 — manager.ts와 순환 import라 모듈 맨 위에서 그 상수를 쓰면 브라우저에서 아직 정의 전
  */
 export function createSideManager(id: string, side: number): { device: Device; sockets: Socket[] } {
-  const L = { x: SIDE_RING_X + RING_R + 0.02, w: 0.016, d: 0.05, y0: 0.08, y1: RACK_HEIGHT - 0.1 };
+  const L = { x: SIDE_RING_X + RING_R + 0.02, w: 0.016, d: 2 * 0.026 + 0.012, y0: 0.08, y1: RACK_HEIGHT - 0.1 };
   const def = DEVICES['cable-manager-v'];
   const sx = side === 0 ? -1 : 1;
   const g = new THREE.Group();
@@ -187,19 +206,19 @@ export function createSideManager(id: string, side: number): { device: Device; s
     arm.position.set(sx * (RACK.width / 2 + armLen / 2), y, -(RACK.depth - RACK.frame) / 2);
     g.add(arm);
   }
-  const ringGeo = new THREE.TorusGeometry(RING_R, RING_TUBE, 8, 24);
-  const stemLen = L.x - L.w / 2 - SIDE_RING_X - RING_R;
-  const stemGeo = new THREE.BoxGeometry(stemLen, 0.004, 0.006);
-  for (const ring of sideRingsOf(id, side, def.rings!)) {
-    const [x, y, z] = ring.pos;
-    const mesh = new THREE.Mesh(ringGeo, new THREE.MeshStandardMaterial({ color: 0x8a929c, metalness: 0.7, roughness: 0.35 }));
-    mesh.rotation.x = Math.PI / 2;
-    mesh.position.set(x, y, z);
-    mesh.userData.ringId = ring.id;
-    g.add(mesh);
-    const stem = new THREE.Mesh(stemGeo, new THREE.MeshStandardMaterial({ color: 0x5a6068, metalness: 0.6, roughness: 0.5 }));
-    stem.position.set(x + sx * (RING_R + stemLen / 2), y, z);
-    g.add(stem);
+  // 세로 핑거 덕트: 기둥(몸체)에서 랙 쪽(-sx)으로 뻗은 손가락 두 줄(앞뒤 z), 고리 높이 사이(±4cm)에. 선은 랙 쪽 틈으로 옆에서 드나듦
+  const mat = ductMaterial();
+  const inner = L.x - L.w / 2;
+  const tip = SIDE_RING_X - 0.035;
+  const len = inner - tip;
+  const finger = new THREE.BoxGeometry(len, DUCT.fingerW, DUCT.fingerT);
+  const lip = new THREE.BoxGeometry(DUCT.lipT, DUCT.fingerW, DUCT.lip);
+  const ys = def.rings!;
+  for (let y = ys[0]! - 0.04; y <= Math.min(ys[ys.length - 1]! + 0.04, L.y1 - 0.01) + 1e-9; y += 0.08) {
+    for (const s of [1, -1]) {
+      ductPart(g, id, mat, finger, sx * (tip + len / 2), y, SIDE_RING_Z + s * DUCT.rowOff);
+      ductPart(g, id, mat, lip, sx * (tip + DUCT.lipT / 2), y, SIDE_RING_Z + s * (DUCT.rowOff - DUCT.fingerT / 2 - DUCT.lip / 2));
+    }
   }
   const power = powerOf(id, def, 'passive', []);
   return { device: { id, def, u: null, side, on: false, ports: [], group: g, body, button: null, led: null, backLed: null, power }, sockets: [] };
