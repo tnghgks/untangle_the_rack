@@ -8,7 +8,7 @@ import { tidyDegree } from '../src/cable/route';
 import { parseSave, SAVE_VERSION } from '../src/game/save';
 import { createStartRoom, restoreRoom, TIDY_POWER_CUT, type Room } from '../src/view/room';
 
-const newRoom = (): Room => createStartRoom(new THREE.Scene(), new THREE.Group());
+const newRoom = (): Room => createStartRoom(new THREE.Scene());
 
 /** 시작 방 + U5 매니저 */
 function roomWithGuide(u = 5): { room: Room; g: Guide } {
@@ -115,7 +115,7 @@ describe('경로에 넣기·묶기·풀기', () => {
   it('가이드 한 구간만 묶으면 부분 보상', () => {
     const { room, g: h } = roomWithGuide();
     const v = guideOf(room.addSide('cable-manager-v')!)!;
-    expect(room.guides().map((x) => x.id).sort()).toEqual([h.id, v.id].sort());
+    expect(room.guides().filter((x) => !x.tray).map((x) => x.id).sort()).toEqual([h.id, v.id].sort());
     const c = room.world.cables[2]!;
     expect(room.routeWith(c, [h.id, v.id], [])).toBe(true);
     expect(c.route).toEqual({ guides: [h.id, v.id], tied: [] });
@@ -220,7 +220,7 @@ describe('경로에 넣기·묶기·풀기', () => {
     const device = room.device(g.id)!;
     expect(room.remove(device)).toBe(true);
     for (const c of room.world.cables) expect(c.route).toBeNull();
-    const moved = guideOf(room.install('cable-manager', 12, g.id)!)!;
+    const moved = guideOf(room.install('cable-manager', 12, 'rack-1', g.id)!)!;
     for (const { cable, guides, tied } of kept) expect(room.routeWith(cable, guides, tied)).toBe(true);
     for (const c of room.world.cables) expect(c.route).toEqual({ guides: [g.id], tied: [g.id] });
     expectNoOverlap([lan, p0, p1], moved);
@@ -246,7 +246,7 @@ describe('경로에 넣기·묶기·풀기', () => {
     const ids = room.world.cables.map((c) => c.id);
     expect(new Set(ids).size).toBe(ids.length);
     const data = parseSave(JSON.stringify({ v: SAVE_VERSION, money: 0, bought: {}, ...room.snapshot() }))!;
-    const back = restoreRoom(new THREE.Scene(), new THREE.Group(), data);
+    const back = restoreRoom(new THREE.Scene(), data);
     expect(back.world.cables.map((c) => c.id)).toEqual(ids); // 불러온 id는 그대로
     back.spawnCable('power');
     const after = back.world.cables.map((c) => c.id);
@@ -289,7 +289,7 @@ describe('경로에 넣기·묶기·풀기', () => {
     room.tieGuide(g.id);
     const data = parseSave(JSON.stringify({ v: SAVE_VERSION, money: 0, bought: {}, ...room.snapshot() }))!;
     expect(data).not.toBeNull();
-    const back = restoreRoom(new THREE.Scene(), new THREE.Group(), data);
+    const back = restoreRoom(new THREE.Scene(), data);
     for (const c of room.world.cables) {
       const d = back.world.cables.find((x) => x.id === c.id)!;
       expect(d.route).toEqual(c.route);
@@ -305,7 +305,7 @@ describe('경로에 넣기·묶기·풀기', () => {
     const snap = room.snapshot();
     snap.devices = snap.devices.filter((d) => d.id !== g.id);
     const data = parseSave(JSON.stringify({ v: SAVE_VERSION, money: 0, bought: {}, ...snap }))!;
-    const back = restoreRoom(new THREE.Scene(), new THREE.Group(), data);
+    const back = restoreRoom(new THREE.Scene(), data);
     const d = back.world.cables.find((x) => x.id === c.id)!;
     expect(d.route).toBeNull();
     expect(d.rope.frozen).toBe(false);

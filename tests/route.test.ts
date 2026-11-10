@@ -6,7 +6,7 @@ import { SIDE_RING_X } from '../src/cable/manager';
 import { findRoute, laneKey, laneOffset, laneOffsets, laneOrder, NEAR, resample, routeLayout, routePath, smoothLayout } from '../src/cable/route';
 import { createStartRoom, type Room } from '../src/view/room';
 
-const newRoom = (): Room => createStartRoom(new THREE.Scene(), new THREE.Group());
+const newRoom = (): Room => createStartRoom(new THREE.Scene());
 
 /** 시작 방의 케이블 3가닥 끝 포트 (0·1 = PDU → 스위치·서버 전원, 2 = 스위치 ↔ 서버 랜) */
 const cableEnds = (room: Room) => room.world.cables.map((c) => ({ a: c.ends[0]!, b: c.ends[1]! }));
@@ -122,7 +122,7 @@ describe('가이드와 경로 찾기', () => {
   it('위 포트들에서 내려와 같은 쪽 끝으로 가는 선들은 서로 안 가로지름 (먼저 들어온 선이 아래 차선)', () => {
     const room = newRoom();
     const h = guideOf(room.install('cable-manager', 20)!)!;
-    const v = guideOf(room.addSide('cable-manager-v', 1)!)!;
+    const v = guideOf(room.addSide('cable-manager-v', 'rack-1', 1)!)!;
     const top = room.install('switch-8', 21)!;
     const low = room.install('server-entry', 10)!;
     const b = low.ports.find((p) => p.kind === 'lan')! as Port;

@@ -3,6 +3,7 @@
 // lastTick은 저장하지 않음 (4.3) — 불러온 시점부터 수익을 다시 쌓는다.
 
 import { DEVICES, type DeviceDefId } from '../data/catalog';
+import type { RackPlace } from '../rack/floor';
 import type { GameState } from './state';
 
 export const SAVE_KEY = 'untangle_the_rack.save';
@@ -17,6 +18,8 @@ export interface SavedDevice {
   side: number | null;
   on: boolean;
   tripped: boolean;
+  /** 달린 랙 id. 없으면 첫 랙(rack-1) — 옛 저장 */
+  rack?: string;
 }
 
 export interface SavedCable {
@@ -44,6 +47,8 @@ export interface SaveData {
   spawned: number;
   devices: SavedDevice[];
   cables: SavedCable[];
+  /** 세운 랙과 칸. 없으면 첫 랙 하나 — 옛 저장 */
+  racks?: RackPlace[];
 }
 
 export function round3(x: number): number {

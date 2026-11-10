@@ -18,11 +18,11 @@ function roundTrip(room: Room): { data: SaveData; back: Room } {
   const store = memoryStorage();
   writeSave(store, toSave(room));
   const data = loadSave(store)!;
-  return { data, back: restoreRoom(new THREE.Scene(), new THREE.Group(), data) };
+  return { data, back: restoreRoom(new THREE.Scene(), data) };
 }
 
 function startRoom(): Room {
-  return createStartRoom(new THREE.Scene(), new THREE.Group());
+  return createStartRoom(new THREE.Scene());
 }
 
 describe('save', () => {
@@ -82,7 +82,7 @@ describe('save', () => {
   it('줄이기 도구 시절 저장의 길이(length)는 무시하고 기본 2m', () => {
     const { data } = roundTrip(startRoom());
     const old = { ...data, cables: data.cables.map((c) => ({ ...c, length: 0.9 })) };
-    const fromOld = restoreRoom(new THREE.Scene(), new THREE.Group(), parseSave(JSON.stringify(old))!);
+    const fromOld = restoreRoom(new THREE.Scene(), parseSave(JSON.stringify(old))!);
     expect(fromOld.world.cables[2].rope.length).toBeCloseTo(2, 3);
   });
 
@@ -92,7 +92,7 @@ describe('save', () => {
     data.cables[0] = { ...data.cables[0], ties: [{ node: 10, pos: [0, 1, 0], hook: 'cable-manager#3:ring1' }] };
     const parsed = parseSave(JSON.stringify(data));
     expect(parsed).not.toBeNull();
-    const back = restoreRoom(new THREE.Scene(), new THREE.Group(), parsed!);
+    const back = restoreRoom(new THREE.Scene(), parsed!);
     expect(back.world.cables[0].ends.map((p) => p?.id)).toEqual(room.world.cables[0].ends.map((p) => p?.id));
     // 옛 띠는 무시: 마디를 고정하지 않고, 경로 없이 물리로
     expect(back.world.cables[0].rope.isPinned(10)).toBe(false);

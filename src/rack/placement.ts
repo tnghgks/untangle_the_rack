@@ -59,7 +59,7 @@ export function createPlacement({ canvas, camera, controls, room, install, putBa
   const ghost = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat);
   ghost.visible = false;
   ghost.renderOrder = 10;
-  room.rack.add(ghost);
+  room.racks[0].group.add(ghost); // 임시: 첫 랙만 (여러 랙 입력은 이후 태스크)
 
   let held: DeviceDefId | null = null;
   let moving: MovingDevice | null = null;
@@ -82,8 +82,8 @@ export function createPlacement({ canvas, camera, controls, room, install, putBa
     plane.set(new THREE.Vector3(0, 0, 1), -faceZ);
     if (!raycaster.ray.intersectPlane(plane, hit)) return;
     if (Math.abs(hit.x) > REACH_X || hit.y < 0 || hit.y > RACK_HEIGHT + 0.2) return;
-    const u = uFromCenterY(hit.y, def.sizeU, RACK.baseHeight, U, room.slots.units);
-    const ok = room.slots.canPlace(u, def.sizeU);
+    const u = uFromCenterY(hit.y, def.sizeU, RACK.baseHeight, U, room.racks[0].slots.units);
+    const ok = room.racks[0].slots.canPlace(u, def.sizeU);
     target = { u, ok };
     ghost.scale.set(DEVICE_WIDTH + 0.004, deviceHeight(def.sizeU) + 0.004, DEVICE_DEPTH + 0.004);
     ghost.position.set(0, deviceCenterY(u, def.sizeU), 0);

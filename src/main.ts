@@ -52,7 +52,7 @@ const hud = createHud(hudRoot, () => {
   store?.removeItem(SAVE_KEY);
   location.reload();
 }, !saved && stress === 0);
-const room = saved ? restoreRoom(stage.scene, stage.rack, saved) : createStartRoom(stage.scene, stage.rack);
+const room = saved ? restoreRoom(stage.scene, saved) : createStartRoom(stage.scene);
 if (stress > 0) room.addStress(stress);
 const state = createGameState(Date.now(), saved?.money ?? START_MONEY);
 if (saved) state.bought = { ...saved.bought };
@@ -72,7 +72,7 @@ const placement = createPlacement({
   room,
   // 장비 값은 끼울 때 낸다 (들기 취소 = 환불 필요 없음). 뺀 장비는 공짜로 다시 끼움
   install(id, u, moving) {
-    if (!room.slots.canPlace(u, DEVICES[id].sizeU)) return moving && reinstall(id, moving.u, moving);
+    if (!room.racks[0].slots.canPlace(u, DEVICES[id].sizeU)) return moving && reinstall(id, moving.u, moving);
     if (moving) return reinstall(id, u, moving);
     if (!buy(id)) return flashHint('돈이 모자라요');
     room.install(id, u);
@@ -85,7 +85,7 @@ const placement = createPlacement({
 });
 /** 뺀 장비를 같은 id로 다시 끼움. 전원 버튼 상태는 뺄 때 그대로 */
 const reinstall = (id: DeviceDefId, u: number, moving: MovingDevice) => {
-  const device = room.install(id, u, moving.id);
+  const device = room.install(id, u, room.racks[0].id, moving.id); // 임시: 첫 랙만 (여러 랙 입력은 이후 태스크)
   if (!device) return;
   if (moving.on) room.setPower(device, true);
   // 옮긴 매니저: 지나던 선을 같은 경로·묶음으로 되살림 (그새 다른 경로에 들었거나 뽑힌 선은 그대로)
@@ -246,7 +246,7 @@ const shop = createShop(hud.shopPanel, {
   blockedReason: (def) =>
     isSideDef(def.id)
       ? room.freeSide(def.id) === null ? '옆면 자리 없음' : state.money < price(def.id) ? '돈 부족' : null
-      : room.slots.firstFree(def.sizeU) === null ? `빈 ${def.sizeU}U 자리 없음` : state.money < price(def.id) ? '돈 부족' : null,
+      : room.racks[0].slots.firstFree(def.sizeU) === null ? `빈 ${def.sizeU}U 자리 없음` : state.money < price(def.id) ? '돈 부족' : null,
   cableBlocked: (id) => (state.money < CABLES[id].price ? '돈 부족' : null),
   priceOf: price,
   onBuyDevice: (id) => {

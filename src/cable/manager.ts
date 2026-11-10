@@ -38,9 +38,11 @@ export function sideRingsOf(deviceId: string, side: number, ys: readonly number[
   return ys.map((y, i) => ({ id: `${deviceId}:ring${i}`, pos: [x, y, SIDE_RING_Z], axis: 1 }));
 }
 
-/** 장비의 고리 (매니저가 아니면 빈 목록) */
-export function deviceRings(d: { id: string; u: number | null; side: number | null; def: { rings?: readonly number[] } }): Ring[] {
+/** 장비의 고리 (매니저가 아니면 빈 목록), 월드 좌표 — 장비 랙 원점(없으면 월드 원점)을 더함 */
+export function deviceRings(d: { id: string; u: number | null; side: number | null; def: { rings?: readonly number[] }; origin?: Vec3 }): Ring[] {
   if (!d.def.rings) return [];
-  if (d.u !== null) return ringsOf(d.id, d.u, d.def.rings);
-  return d.side === null ? [] : sideRingsOf(d.id, d.side, d.def.rings);
+  const local = d.u !== null ? ringsOf(d.id, d.u, d.def.rings) : d.side === null ? [] : sideRingsOf(d.id, d.side, d.def.rings);
+  const o = d.origin;
+  if (!o) return local;
+  return local.map((r) => ({ ...r, pos: [r.pos[0] + o[0], r.pos[1] + o[1], r.pos[2] + o[2]] }));
 }
