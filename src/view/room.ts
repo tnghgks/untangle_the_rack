@@ -1,10 +1,14 @@
 import * as THREE from 'three';
-import { createCable, CableWorld, type Cable, type Port, type PortKind } from '../cable/cable';
+import { createCable, CableWorld, endNode, type Cable, type CableEnd, type Port, type PortKind, type Route } from '../cable/cable';
 import { CableMesh } from '../cable/cableMesh';
 import type { Aabb, Vec3 } from '../cable/collide';
 import { guideOf, type Guide } from '../cable/guide';
 import { plug, unplug, type PortHit } from '../cable/plug';
-import { findRoute, laneKey, laneOffsets, laneOrder, resample, routeLayout, smoothLayout, tidyDegree, type LaneOffset, type RouteLayout } from '../cable/route';
+import { canReach } from '../cable/reach';
+import {
+  findRoute, hasTray, laneKey, laneOffsets, laneOrder, pathLength, REACH_SLACK, resample, routeLayout, routePath, smoothLayout, tidyDegree,
+  type LaneOffset, type RouteLayout,
+} from '../cable/route';
 import { events } from '../core/events';
 import { createRng } from '../core/rng';
 import { isSideDef, type DeviceDefId, type SideDefId } from '../data/catalog';
@@ -253,13 +257,13 @@ export class Room {
     events.emit('pdu:reset', { deviceId: pdu.id });
   }
 
-  private addCable(kind: PortKind, saved?: SavedCable): Cable {
+  private addCable(kind: PortKind, saved?: SavedCable, length = CABLE_DEFAULT_LENGTH): Cable {
     const n = this.world.cables.length;
     const color = saved?.color ?? (kind === 'lan' ? LAN_COLORS[n % LAN_COLORS.length] : POWER_COLOR);
     // 저장된 id는 그대로 (옛 저장 포함), 번호는 그보다 뒤로
     const num = saved && /^cable-(\d+)$/.exec(saved.id);
     if (num) this.cableSerial = Math.max(this.cableSerial, Number(num[1]) + 1);
-    const c = createCable(saved?.id ?? `cable-${this.cableSerial++}`, kind, CABLE_DEFAULT_LENGTH, color);
+    const c = createCable(saved?.id ?? `cable-${this.cableSerial++}`, kind, length, color);
     this.world.cables.push(c);
     const m = new CableMesh(c);
     this.scene.add(m.group);
@@ -268,16 +272,17 @@ export class Room {
   }
 
   /**
-   * 상점에서 산 케이블: 랙 바로 뒤 바닥에 U자로 접어 놓음. 양 끝은 PDU 쪽(-x)에 모여
+   * 상점에서 산 케이블: 그 랙 바로 뒤 바닥에 지그재그로 접어 놓음 (2m는 U자 한 번). 양 끝은 PDU 쪽(-x)에 모여
    * 뒷면 시점에서 하단 툴바·상점 패널에 가리지 않는다. 놓을 때마다 조금씩 뒤로
    */
-  spawnCable(kind: PortKind, paid = 0): Cable {
-    const c = this.addCable(kind);
+  spawnCable(kind: PortKind, paid = 0, length = CABLE_DEFAULT_LENGTH, rackId = this.firstRack): Cable {
+    const c = this.addCable(kind, undefined, length);
     c.paid = paid;
-    const z = -0.62 - (this.spawned++ % 4) * 0.12;
+    const o = this.rack(rackId)?.origin ?? [0, 0, 0];
+    const z = o[2] - 0.62 - (this.spawned++ % 4) * 0.12;
     const y = c.rope.cfg.radius + 0.02;
-    const x0 = -0.42, x1 = 0.5, w = 0.08;
-    c.rope.setFromPolyline([[x0, y, z], [x1, y, z], [x1, y, z - w], [x0, y, z - w]]);
+    const x0 = o[0] - 0.42, x1 = o[0] + 0.5;
+    c.rope.setFromPolyline(zigzag(x0, x1, y, z, c.rope.length));
     return c;
   }
 
@@ -301,24 +306,48 @@ export class Room {
     return [...this.devices.flatMap((d) => guideOf(d) ?? []), ...this.racks.map(trayGuide)];
   }
 
-  /** 선을 가이드에 올림: 양 끝이 꽂혀 있으면 그 가이드를 포함하는 경로를 찾아 깖 (묶음은 비움) */
+  /** 선을 가이드에 올림: 양 끝이 꽂혀 있으면 그 가이드를 포함하는 경로를 찾아 깖 (묶음은 비움). 트레이 경로는 선 길이 안이어야 */
   routeCable(cable: Cable, guideId: string): boolean {
     const [a, b] = cable.ends;
     if (!a || !b) return false;
-    const seq = findRoute(a, b, this.guides(), guideId);
+    const seq = findRoute(a, b, this.guides(), guideId, cable.rope.length);
     if (!seq) return false;
     this.setRoute(cable, seq.map((g) => g.id), []);
     events.emit('cable:routed', { cableId: cable.id });
     return true;
   }
 
-  /** 저장·옮기기 복원용: 그 가이드 순서 그대로 경로를 깖 (길이 검사 없음) */
+  /** 저장·옮기기 복원용: 그 가이드 순서 그대로 경로를 깖 (routeFits로 먼저 검사 — 트레이 없는 경로는 길이 무시) */
   routeWith(cable: Cable, guideIds: readonly string[], tied: readonly string[]): boolean {
-    if (!cable.ends[0] || !cable.ends[1] || guideIds.length === 0) return false;
-    const have = new Set(this.guides().map((g) => g.id));
-    if (!guideIds.every((id) => have.has(id))) return false;
+    if (guideIds.length === 0 || !this.routeFits(cable, guideIds)) return false;
     this.setRoute(cable, [...guideIds], [...tied]);
     return true;
+  }
+
+  /** 이 선을 그 가이드 순서로 깔 수 있나: 양 끝 꽂힘, 가이드가 다 있음, 트레이가 있으면 선 길이 안 */
+  routeFits(cable: Cable, guideIds: readonly string[]): boolean {
+    const [a, b] = cable.ends;
+    return !!a && !!b && this.seqFits(cable, a, b, guideIds);
+  }
+
+  /**
+   * 옮긴 장비 포트에 그 끝을 다시 꽂아도 되나: 직선으로 닿거나(canReach), 뽑기 전 경로(route)를 이 포트로 깔았을 때
+   * routeFits와 같은 조건(트레이 없으면 참, 있으면 길이)을 만족. 반대쪽 끝이 안 꽂혀 있으면 canReach만
+   */
+  canReplug(cable: Cable, end: CableEnd, port: Port, route: Route | null): boolean {
+    if (canReach(cable, endNode(cable, end), port.pos)) return true;
+    const other = cable.ends[end === 0 ? 1 : 0];
+    if (!other || !route || route.guides.length === 0) return false;
+    return end === 0 ? this.seqFits(cable, port, other, route.guides) : this.seqFits(cable, other, port, route.guides);
+  }
+
+  /** a → b를 그 가이드 순서로: 가이드가 다 있고, 트레이가 있으면 실제 선 모양 길이 × REACH_SLACK ≤ 선 길이 */
+  private seqFits(cable: Cable, a: Port, b: Port, guideIds: readonly string[]): boolean {
+    const byId = new Map(this.guides().map((g) => [g.id, g]));
+    const seq = guideIds.map((id) => byId.get(id));
+    if (seq.some((g) => !g)) return false;
+    const gs = seq as Guide[];
+    return !hasTray(gs) || pathLength(routePath(a, b, gs)) * REACH_SLACK <= cable.rope.length;
   }
 
   private setRoute(cable: Cable, guides: string[], tied: string[]): void {
@@ -527,6 +556,26 @@ function wobble({ pts, spans }: RouteLayout, tights: readonly number[]): Vec3[] 
     }
   });
   return out;
+}
+
+/** 줄 폭 */
+const ZIG_ROW_STEP = 0.06;
+
+/**
+ * 바닥에 접어 깐 선: x0 ↔ x1 줄을 z로 ZIG_ROW_STEP씩 뒤(-z)로 늘려 가며 길이 length만큼 (최소 U자 한 번).
+ * 남는 길이가 줄 반보다 짧으면 줄을 더 안 늘림 — 로프는 꺾은선 호 길이로 고르게 깔리니 조금 짧아도 됨 (2m = U자 한 번)
+ */
+function zigzag(x0: number, x1: number, y: number, z: number, length: number): Vec3[] {
+  const row = Math.abs(x1 - x0);
+  const pts: Vec3[] = [[x0, y, z], [x1, y, z]];
+  let total = row;
+  for (let k = 1; k < 2 || total + row / 2 < length; k++) {
+    const zk = z - k * ZIG_ROW_STEP;
+    const from = k % 2 === 1 ? x1 : x0, to = k % 2 === 1 ? x0 : x1;
+    pts.push([from, y, zk], [to, y, zk]);
+    total += ZIG_ROW_STEP + row;
+  }
+  return pts;
 }
 
 function removeWhere<T>(arr: T[], drop: (x: T) => boolean): void {

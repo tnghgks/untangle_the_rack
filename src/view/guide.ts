@@ -53,8 +53,12 @@ export function createGuideTool({ canvas, camera, scene, room, drag, active }: G
   preview.renderOrder = 20;
   preview.frustumCulled = false;
   scene.add(preview);
-  /** 지금 미리보기가 그린 것 (선 id|가이드 id) — 바뀔 때만 다시 계산 */
+  /**
+   * 지금 미리보기가 계산한 것 (선|가이드|두 끝 포트|가이드 배치 판) — 키가 같으면 findRoute도 점선도 다시 안 함.
+   * previewSeq = 그때 찾은 경로 (없으면 null)
+   */
   let previewKey = '';
+  let previewSeq: Guide[] | null = null;
 
   /** 밝힌 매니저 */
   let lit: { id: string; color: number; mats: THREE.MeshStandardMaterial[] } | null = null;
@@ -82,6 +86,7 @@ export function createGuideTool({ canvas, camera, scene, room, drag, active }: G
   const hidePreview = () => {
     preview.visible = false;
     previewKey = '';
+    previewSeq = null;
   };
 
   const rayToGuide = (ray: THREE.Ray): Guide | null => {
@@ -134,19 +139,20 @@ export function createGuideTool({ canvas, camera, scene, room, drag, active }: G
     }
     flash = null;
     const [a, b] = cable.ends;
-    const seq = a && b ? findRoute(a, b, room.guides(), guide.id) : null;
-    light(guide.id, seq ? OK_GLOW : BAD_GLOW);
-    if (!seq || !a || !b) return hidePreview();
-    const key = `${cable.id}|${guide.id}`;
+    const key = `${cable.id}|${guide.id}|${a?.id ?? ''}|${b?.id ?? ''}|${room.layoutVersion}`;
     if (key !== previewKey) {
       previewKey = key;
-      // 경로마다 꼭짓점 수가 달라 기하를 새로 만든다 (setFromPoints는 기존 버퍼 크기를 못 늘림)
-      const pts = routePath(a, b, seq).map((p) => new THREE.Vector3(p[0], p[1], p[2]));
-      preview.geometry.dispose();
-      preview.geometry = new THREE.BufferGeometry().setFromPoints(pts);
-      preview.computeLineDistances();
+      previewSeq = a && b ? findRoute(a, b, room.guides(), guide.id, cable.rope.length) : null;
+      if (previewSeq && a && b) {
+        // 경로마다 꼭짓점 수가 달라 기하를 새로 만든다 (setFromPoints는 기존 버퍼 크기를 못 늘림)
+        const pts = routePath(a, b, previewSeq).map((p) => new THREE.Vector3(p[0], p[1], p[2]));
+        preview.geometry.dispose();
+        preview.geometry = new THREE.BufferGeometry().setFromPoints(pts);
+        preview.computeLineDistances();
+      }
     }
-    preview.visible = true;
+    light(guide.id, previewSeq ? OK_GLOW : BAD_GLOW);
+    preview.visible = previewSeq !== null;
   };
 
   return {

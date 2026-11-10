@@ -1,7 +1,7 @@
 // 바닥 칸: 랙을 놓을 수 있는 격자와 랙 위 트레이, 긴 LAN 케이블이 닿는 칸 판정.
 // Three.js에 의존하지 않는다 (헤드리스 테스트용).
 
-import { REACH_SLACK } from '../cable/reach';
+import { REACH_SLACK } from '../cable/route';
 import type { Vec3 } from '../cable/collide';
 import type { Guide } from '../cable/guide';
 import { SIDE_RING_X, SIDE_RING_Z } from '../cable/manager';

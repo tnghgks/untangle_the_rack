@@ -10,9 +10,7 @@ import { createHover } from './view/hover';
 import { createDeviceDrag } from './view/deviceDrag';
 import { createGuideTool } from './view/guide';
 import { createTieTool } from './view/tie';
-import { endNode } from './cable/cable';
 import { plug } from './cable/plug';
-import { canReach } from './cable/reach';
 import { createPlacement, type MovingDevice } from './rack/placement';
 import type { Device } from './rack/device';
 import { CABLES, DEVICES, isSideDef, START_MONEY, type DeviceDefId } from './data/catalog';
@@ -92,12 +90,12 @@ const reinstall = (id: DeviceDefId, u: number, moving: MovingDevice) => {
   for (const { cable, guides, tied } of moving.routes ?? []) {
     if (!cable.route) room.routeWith(cable, guides, tied);
   }
-  // 끌어 옮긴 것: 꽂혀 있던 케이블을 같은 포트에 다시 꽂음 (케이블 길이가 닿는 것만)
+  // 끌어 옮긴 것: 꽂혀 있던 케이블을 같은 포트에 다시 꽂음 (직선으로 닿거나 원래 경로로 닿는 것만 — room.canReplug)
   if (moving.plugs) {
     let kept = 0;
     for (const p of moving.plugs) {
       const port = device.ports.find((x) => x.id === p.portId);
-      if (port && canReach(p.cable, endNode(p.cable, p.end), port.pos) && plug(p.cable, p.end, port)) kept++;
+      if (port && room.canReplug(p.cable, p.end, port, p.route) && plug(p.cable, p.end, port)) kept++;
     }
     // 다 꽂은 뒤 경로를 되살림 (양 끝이 이 장비에 있는 선도 두 끝이 다 꽂힌 다음에)
     for (const { cable, route } of moving.plugs) {
