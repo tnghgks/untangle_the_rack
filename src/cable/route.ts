@@ -114,12 +114,36 @@ export function findRoute(a: Port, b: Port, guides: readonly Guide[], dropped: s
   return best ?? [drop];
 }
 
-/** k번째 차선 오프셋. 촘촘(tight=1)은 선이 맞닿게, 느슨(tight=0)은 0.014 간격. 4줄씩 쌓은 격자 */
-export function laneOffset(k: number, tight: number, radius: number): LaneOffset {
-  const gap = 0.014 + (2 * radius + 0.001 - 0.014) * tight;
-  const col = k % 4;
-  const row = Math.floor(k / 4);
-  return { d: [(col - 1.5) * gap, row * gap] };
+/** 느슨할 때(tight 0) 차선 간격 m */
+export const LOOSE_GAP = 0.014;
+/** 한 줄의 차선 수 */
+const LANE_COLS = 4;
+
+/**
+ * k번째 차선 오프셋. 4줄씩 쌓은 격자이고, 줄은 -z(랙·장비 뒷면에서 먼 쪽)로 늘어남.
+ * 간격: 촘촘(tight=1)은 가장 굵은 선끼리 맞닿게(2 × maxRadius + 1mm), 느슨(tight=0)은 LOOSE_GAP.
+ * maxRadius = 그 가이드를 지나는 선 중 가장 굵은 선의 반지름 (한 가이드에 격자 하나)
+ */
+export function laneOffset(k: number, tight: number, maxRadius: number): LaneOffset {
+  const gap = LOOSE_GAP + (2 * maxRadius + 0.001 - LOOSE_GAP) * tight;
+  const col = k % LANE_COLS;
+  const row = Math.floor(k / LANE_COLS);
+  return { d: [(col - (LANE_COLS - 1) / 2) * gap, 0 - row * gap] }; // 0 - : 첫 줄을 -0 아닌 0으로
+}
+
+/**
+ * 한 가이드를 지나는 선 n가닥의 차선. 앞의 tiedCount가닥은 묶인 선(늘 촘촘), 나머지는 안 묶인 선(tight).
+ * 안 묶인 선은 묶인 다발 뒤 차선을 이어 쓰고, 느슨한 만큼(1 - tight) 다발에서 -z로 LOOSE_GAP 비켜 서로 파고들지 않음.
+ * tight 1이 되면 다 묶인 격자와 같은 자리 → 묶는 순간 선이 튀지 않음
+ */
+export function laneOffsets(n: number, tiedCount: number, tight: number, maxRadius: number): LaneOffset[] {
+  const away = tiedCount > 0 ? (1 - tight) * LOOSE_GAP : 0;
+  return Array.from({ length: n }, (_, k) => {
+    if (k < tiedCount) return laneOffset(k, 1, maxRadius);
+    const off = laneOffset(k, tight, maxRadius);
+    off.d[1] -= away;
+    return off;
+  });
 }
 
 /** 정리 정도 0..1: 경로의 가이드 중 묶인 비율 (경로 없으면 0) */

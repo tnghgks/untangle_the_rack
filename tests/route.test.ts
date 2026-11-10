@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
 import { guideOf } from '../src/cable/guide';
-import { FREE_WEIGHT, findRoute, laneOffset, pathLength, routePath, routeScore } from '../src/cable/route';
+import { FREE_WEIGHT, findRoute, laneOffset, laneOffsets, pathLength, REACH_SLACK, routePath, routeScore } from '../src/cable/route';
 import { createStartRoom, type Room } from '../src/view/room';
 
 const newRoom = (): Room => createStartRoom(new THREE.Scene(), new THREE.Group());
@@ -24,6 +24,9 @@ describe('가이드와 경로 찾기', () => {
     const room = newRoom();
     const g = guideOf(room.install('cable-manager', 40)!)!;
     for (const { a, b } of cableEnds(room)) expect(findRoute(a, b, [g], g.id, 2.0)).toEqual([g]);
+    // 적어도 한 가닥은 2m를 넘음 → 길이를 무시하는 대체 경로로 나온 것
+    const over = cableEnds(room).filter(({ a, b }) => pathLength(routePath(a, b, [g])) * REACH_SLACK > 2);
+    expect(over.length).toBeGreaterThan(0);
   });
 
   it('가이드 목록에 놓은 가이드가 없으면 null', () => {
@@ -76,5 +79,33 @@ describe('가이드와 경로 찾기', () => {
         expect(d).toBeGreaterThanOrEqual(0.006);
       }
     }
+  });
+
+  it('차선 줄은 랙에서 먼 쪽(-z)으로 쌓임', () => {
+    for (let k = 0; k < 4; k++) expect(laneOffset(k, 1, 0.003).d[1]).toBe(0);
+    expect(laneOffset(4, 1, 0.003).d[1]).toBeLessThan(0);
+    expect(laneOffset(8, 0, 0.003).d[1]).toBeLessThan(laneOffset(4, 0, 0.003).d[1]);
+  });
+
+  it('laneOffsets: 묶인 선(앞)과 안 묶인 선(뒤)이 섞여도 어떤 tight에서든 안 겹침', () => {
+    for (const maxR of [0.003, 0.004]) {
+      for (let n = 1; n <= 9; n++) {
+        for (let tied = 0; tied <= n; tied++) {
+          for (const t of [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1]) {
+            const ls = laneOffsets(n, tied, t, maxR);
+            expect(ls).toHaveLength(n);
+            for (let i = 0; i < n; i++) {
+              for (let j = i + 1; j < n; j++) {
+                const d = Math.hypot(ls[i]!.d[0] - ls[j]!.d[0], ls[i]!.d[1] - ls[j]!.d[1]);
+                expect(d, `n=${n} tied=${tied} t=${t} ${i}-${j}`).toBeGreaterThanOrEqual(2 * maxR);
+              }
+            }
+          }
+        }
+      }
+    }
+    // 다 묶이면 (또는 tight 1이면) 그냥 촘촘한 격자
+    expect(laneOffsets(5, 2, 1, 0.004)).toEqual(Array.from({ length: 5 }, (_, k) => laneOffset(k, 1, 0.004)));
+    expect(laneOffsets(5, 0, 0.3, 0.004)).toEqual(Array.from({ length: 5 }, (_, k) => laneOffset(k, 0.3, 0.004)));
   });
 });

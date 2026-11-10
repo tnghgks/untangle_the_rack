@@ -35,11 +35,36 @@ function guideNodes(c: Cable, g: Guide): [number, number, number][] {
   return out;
 }
 
-/** 선 i의 가이드 가운데 마디와, 선 j에서 x가 가장 가까운 가이드 마디 사이 거리 */
-function midGap(si: readonly [number, number, number][], sj: readonly [number, number, number][]): number {
-  const m = si[Math.floor(si.length / 2)]!;
-  const q = sj.reduce((best, p) => (Math.abs(p[0] - m[0]) < Math.abs(best[0] - m[0]) ? p : best));
-  return dist(m, q);
+/**
+ * 가이드를 따라 가는 두 선의 가장 가까운 단면 거리: 선 i의 각 가이드 마디 x에서 선 j를 보간한 점까지 (y, z) 거리의 최소.
+ * x 구간이 안 겹치면 Infinity
+ */
+function minGap(si: readonly [number, number, number][], sj: readonly [number, number, number][]): number {
+  let best = Infinity;
+  for (const m of si) {
+    for (let k = 0; k + 1 < sj.length; k++) {
+      const p = sj[k]!, q = sj[k + 1]!;
+      if ((p[0] - m[0]) * (q[0] - m[0]) > 0 || p[0] === q[0]) continue;
+      const t = (m[0] - p[0]) / (q[0] - p[0]);
+      best = Math.min(best, Math.hypot(m[1] - (p[1] + (q[1] - p[1]) * t), m[2] - (p[2] + (q[2] - p[2]) * t)));
+    }
+  }
+  return best;
+}
+
+/** 가이드 위에서 어느 두 선도 서로 파고들지 않음 (중심 거리 ≥ 두 반지름 합) */
+function expectNoOverlap(cables: readonly Cable[], g: Guide): void {
+  const sets = cables.map((c) => guideNodes(c, g));
+  for (const s of sets) expect(s.length).toBeGreaterThan(0);
+  for (let i = 0; i < cables.length; i++) {
+    for (let j = i + 1; j < cables.length; j++) {
+      const need = cables[i]!.rope.cfg.radius + cables[j]!.rope.cfg.radius;
+      // 짧은 구간은 마디가 하나뿐일 수 있어 양쪽에서 잼
+      const gap = Math.min(minGap(sets[i]!, sets[j]!), minGap(sets[j]!, sets[i]!));
+      expect(gap, `${cables[i]!.id} ↔ ${cables[j]!.id}`).toBeGreaterThanOrEqual(need);
+      expect(gap).toBeLessThan(Infinity); // 같은 구간을 지남
+    }
+  }
 }
 
 describe('경로에 넣기·묶기·풀기', () => {
@@ -117,11 +142,35 @@ describe('경로에 넣기·묶기·풀기', () => {
     expect(c0.route!.tied).toEqual([g.id]);
     expect(c1.route!.tied).toEqual([g.id]);
     expect(c2.route!.tied).toEqual([]);
-    const sets = [c0, c1, c2].map((c) => guideNodes(c, g));
-    for (const s of sets) expect(s.length).toBeGreaterThan(0);
-    for (let i = 0; i < 3; i++) {
-      for (let j = 0; j < 3; j++) if (i !== j) expect(midGap(sets[i]!, sets[j]!)).toBeGreaterThanOrEqual(0.005);
+    expectNoOverlap([c0, c1, c2], g);
+  });
+
+  it('전원선 하나만 묶고 다른 전원선을 올려도 안 겹침 (묶는 연출 중에도)', () => {
+    const { room, g } = roomWithGuide();
+    const [p0, p1] = room.world.cables as [Cable, Cable];
+    expect(p0.kind).toBe('power');
+    expect(p1.kind).toBe('power');
+    room.routeCable(p0, g.id);
+    expect(room.tieGuide(g.id)).toEqual([p0]);
+    room.routeCable(p1, g.id);
+    expectNoOverlap([p0, p1], g);
+    for (const t of [0.25, 0.5, 0.75, 1]) {
+      room.relayout(g.id, new Map([[g.id, t]]));
+      expectNoOverlap([p0, p1], g);
     }
+  });
+
+  it('랜선을 묶은 뒤 전원선을 더해 다 묶어도 안 겹침', () => {
+    const { room, g } = roomWithGuide();
+    const [p0, p1, lan] = room.world.cables as [Cable, Cable, Cable];
+    expect(lan.kind).toBe('lan');
+    room.routeCable(lan, g.id);
+    expect(room.tieGuide(g.id)).toEqual([lan]);
+    room.routeCable(p0, g.id);
+    room.routeCable(p1, g.id);
+    expectNoOverlap([p0, p1, lan], g);
+    expect(room.tieGuide(g.id)).toEqual([p0, p1]);
+    expectNoOverlap([p0, p1, lan], g);
   });
 
   it('묶는 연출의 tight 덮어쓰기는 안 묶인 선에만 — 묶인 선 마디는 그대로', () => {

@@ -3,7 +3,7 @@ import type { Vec3 } from '../cable/collide';
 import type { Cable } from '../cable/cable';
 import type { Guide } from '../cable/guide';
 import { deviceRings } from '../cable/manager';
-import { laneOffset, routePath } from '../cable/route';
+import { routePath } from '../cable/route';
 import { events } from '../core/events';
 import { playTie } from '../ui/sfx';
 import { pickCable } from './pick';
@@ -43,7 +43,7 @@ const easeOut = (t: number) => 1 - (1 - t) ** 3;
 
 /**
  * 그 가이드에 묶인 선들을 감쌀 띠 자리 (묶인 선이 없으면 빈 목록).
- * 차선은 room.relayout과 같은 규칙: 그 가이드를 지나는 경로 선 중 world.cables 순서상 k번째, 묶였으니 tight 1
+ * 차선은 room.relayout과 같은 규칙(room.laneMap): 묶인 선이 앞 차선, 늘 tight 1
  */
 export function strapSpots(room: Room, guideId: string): StrapSpot[] {
   const guides = room.guides();
@@ -51,17 +51,18 @@ export function strapSpots(room: Room, guideId: string): StrapSpot[] {
   if (!g) return [];
   const byId = new Map(guides.map((x) => [x.id, x]));
   const passing = room.world.cables.filter((c) => c.route?.guides.includes(guideId));
+  const lanes = room.laneMap(guideId);
   const ax = g.axis; // 가이드 축 좌표 (0: x, 1: y)
   const i0 = ax === 0 ? 1 : 0; // 감는 방향 좌표
   let lo = Infinity, hi = -Infinity;
   let min0 = Infinity, max0 = -Infinity, min1 = Infinity, max1 = -Infinity;
   let radius = 0;
-  passing.forEach((c, k) => {
+  for (const c of passing) {
     const route = c.route!;
     const [a, b] = c.ends;
-    if (!a || !b || !route.tied.includes(guideId)) return;
+    if (!a || !b || !route.tied.includes(guideId)) continue;
     const seq = route.guides.map((id) => byId.get(id));
-    if (seq.some((x) => !x)) return;
+    if (seq.some((x) => !x)) continue;
     const gi = route.guides.indexOf(guideId);
     const pts = routePath(a, b, seq as Guide[]);
     const s0 = pts[2 + 2 * gi]![ax], s1 = pts[3 + 2 * gi]![ax];
@@ -69,12 +70,12 @@ export function strapSpots(room: Room, guideId: string): StrapSpot[] {
     hi = Math.max(hi, s0, s1);
     const r = c.rope.cfg.radius;
     radius = Math.max(radius, r);
-    const { d } = laneOffset(k, 1, r);
+    const { d } = lanes.get(c)!;
     min0 = Math.min(min0, d[0]);
     max0 = Math.max(max0, d[0]);
     min1 = Math.min(min1, d[1]);
     max1 = Math.max(max1, d[1]);
-  });
+  }
   if (lo > hi) return [];
 
   let along: number[];

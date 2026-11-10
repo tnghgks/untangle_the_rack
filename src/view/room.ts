@@ -4,7 +4,7 @@ import { CableMesh } from '../cable/cableMesh';
 import type { Aabb, Vec3 } from '../cable/collide';
 import { guideOf, type Guide } from '../cable/guide';
 import { plug, unplug, type PortHit } from '../cable/plug';
-import { findRoute, laneOffset, routePath, tidyDegree, type LaneOffset } from '../cable/route';
+import { findRoute, laneOffsets, routePath, tidyDegree, type LaneOffset } from '../cable/route';
 import { events } from '../core/events';
 import { createRng } from '../core/rng';
 import { isSideDef, type DeviceDefId, type SideDefId } from '../data/catalog';
@@ -49,6 +49,8 @@ export class Room {
   private serial = 0;
   /** 케이블 id 번호 — 팔아도 되돌리지 않아 id가 겹치지 않음 (불러오면 저장된 id의 가장 큰 번호 다음부터) */
   private cableSerial = 0;
+  /** 가이드마다 선을 묶은 순서 (차선 순서). 풀린 선이 남아 있어도 laneMap이 지금 묶인 선만 고름 */
+  private readonly tieOrder = new Map<string, Cable[]>();
   private spawned = 0;
   private stressCables: Cable[] = [];
   private readonly rng = createRng(42);
@@ -232,7 +234,8 @@ export class Room {
     this.unroute(cable);
     for (const end of [0, 1] as const) unplug(cable, end);
     this.world.cables.splice(i, 1);
-    const k = this.meshes.findIndex((m) => m.cable === cable);
+    for (const order of this.tieOrder.values()) removeWhere(order, (x) => x === cable);
+    const k =this.meshes.findIndex((m) => m.cable === cable);
     if (k >= 0) {
       this.scene.remove(this.meshes[k].group);
       this.meshes[k].dispose();
@@ -261,6 +264,11 @@ export class Room {
     if (!cable.ends[0] || !cable.ends[1] || guideIds.length === 0) return false;
     const have = new Set(this.guides().map((g) => g.id));
     if (!guideIds.every((id) => have.has(id))) return false;
+    // 묶은 순서는 그대로 (옮기기 뒤에도 같은 차선). 처음 보는 선만 뒤에 붙임
+    for (const id of tied) {
+      const order = this.tieOrderOf(id);
+      if (!order.includes(cable)) order.push(cable);
+    }
     this.setRoute(cable, [...guideIds], [...tied]);
     return true;
   }
@@ -286,31 +294,63 @@ export class Room {
   tieGuide(guideId: string): Cable[] {
     const tied = this.world.cables.filter((c) => c.route?.guides.includes(guideId) && !c.route.tied.includes(guideId));
     if (tied.length === 0) return tied;
-    for (const c of tied) c.route!.tied.push(guideId);
+    // 새로 묶인 선은 묶인 순서 맨 뒤로 (전에 묶였다 풀린 선도)
+    const order = this.tieOrderOf(guideId);
+    for (const c of tied) {
+      c.route!.tied.push(guideId);
+      removeWhere(order, (x) => x === c);
+      order.push(c);
+    }
     this.relayout(guideId);
     events.emit('cable:tied', { guideId, cableIds: tied.map((c) => c.id) });
     return tied;
   }
 
+  private tieOrderOf(guideId: string): Cable[] {
+    let order = this.tieOrder.get(guideId);
+    if (!order) this.tieOrder.set(guideId, (order = []));
+    return order;
+  }
+
   /**
-   * 그 가이드(없으면 모든 가이드)를 지나는 경로 선들의 마디를 다시 깖.
-   * 차선 k = 그 가이드를 지나는 선 중 world.cables 순서상 몇 번째. tight: 가이드 id → 0..1 — 그 가이드에서 아직 안 묶인 선에만
-   * 적용 (묶는 연출). 이미 묶인 선은 늘 1, 그 밖엔 0
+   * 그 가이드의 차선 (지나는 경로 선마다 오프셋). 가이드 하나에 격자 하나: 간격은 그 가이드에서 가장 굵은 선 기준.
+   * 묶인 선이 앞 차선(묶은 순서), 안 묶인 선이 그 뒤(world.cables 순서). tight = 안 묶인 선의 tight (묶인 선은 늘 1)
+   */
+  laneMap(guideId: string, tight = 0): Map<Cable, LaneOffset> {
+    const passing = this.world.cables.filter((c) => c.route?.guides.includes(guideId));
+    const order = this.tieOrder.get(guideId) ?? [];
+    const rank = (c: Cable) => {
+      const i = order.indexOf(c);
+      return i < 0 ? Infinity : i;
+    };
+    // 묶은 순서를 모르는 선(순서 목록 밖)은 world.cables 순서로 뒤에 (sort는 안정 정렬)
+    const tied = passing.filter((c) => c.route!.tied.includes(guideId)).sort((p, q) => rank(p) - rank(q));
+    const untied = passing.filter((c) => !c.route!.tied.includes(guideId));
+    const maxRadius = Math.max(0, ...passing.map((c) => c.rope.cfg.radius));
+    const offsets = laneOffsets(passing.length, tied.length, tight, maxRadius);
+    return new Map([...tied, ...untied].map((c, k) => [c, offsets[k]!]));
+  }
+
+  /**
+   * 그 가이드(없으면 모든 가이드)를 지나는 경로 선들의 마디를 다시 깖. 차선은 laneMap.
+   * tight: 가이드 id → 0..1 — 그 가이드에서 아직 안 묶인 선에만 적용 (묶는 연출). 이미 묶인 선은 늘 1, 그 밖엔 0
    */
   relayout(guideId?: string, tight?: ReadonlyMap<string, number>): void {
     const byId = new Map(this.guides().map((g) => [g.id, g]));
-    const routed = this.world.cables.filter((c) => c.route !== null);
-    for (const c of routed) {
-      const route = c.route!;
+    const lanesOn = new Map<string, Map<Cable, LaneOffset>>();
+    const lanesOf = (id: string) => {
+      let m = lanesOn.get(id);
+      if (!m) lanesOn.set(id, (m = this.laneMap(id, tight?.get(id) ?? 0)));
+      return m;
+    };
+    for (const c of this.world.cables) {
+      const route = c.route;
       const [a, b] = c.ends;
-      if (!a || !b || (guideId !== undefined && !route.guides.includes(guideId))) continue;
+      if (!route || !a || !b || (guideId !== undefined && !route.guides.includes(guideId))) continue;
       const seq = route.guides.map((id) => byId.get(id));
       if (seq.some((g) => !g)) continue;
       const tights = route.guides.map((id) => (route.tied.includes(id) ? 1 : tight?.get(id) ?? 0));
-      const lanes: LaneOffset[] = route.guides.map((id, i) => {
-        const k = routed.filter((x) => x.route!.guides.includes(id)).indexOf(c);
-        return laneOffset(k, tights[i]!, c.rope.cfg.radius);
-      });
+      const lanes: LaneOffset[] = route.guides.map((id) => lanesOf(id).get(c)!);
       const pts = routePath(a, b, seq as Guide[], lanes);
       c.rope.setPath(pts);
       wobble(c, pts, tights);
