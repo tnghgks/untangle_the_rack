@@ -464,6 +464,7 @@ export class Room {
       .map((c) => ({
         id: c.id, kind: c.kind, color: c.color,
         ends: [c.ends[0]?.id ?? null, c.ends[1]?.id ?? null],
+        length: c.rope.length,
         nodes: Array.from(c.rope.pos, round3),
         ...(c.paid ? { paid: c.paid } : {}),
         ...(c.route ? { route: { guides: [...c.route.guides], tied: [...c.route.tied] } } : {}),
@@ -472,11 +473,11 @@ export class Room {
     return { serial: this.serial, spawned: this.spawned, devices, cables, racks };
   }
 
-  /** 불러오기: 랙을 먼저 세우고(옛 저장은 첫 랙 하나), 저장된 id·랙·자리로 장비를, 마디 좌표 그대로 케이블을 다시 만든다 */
+  /** 불러오기: 랙을 먼저 세우고, 저장된 id·랙·자리로 장비를, 마디 좌표 그대로 케이블을 다시 만든다 */
   restore(data: Pick<SaveData, 'serial' | 'spawned' | 'devices' | 'cables' | 'racks'>): void {
-    for (const r of data.racks ?? [{ id: 'rack-1', cell: [0, 0] }]) this.addRack(r.cell, r.id);
+    for (const r of data.racks) this.addRack(r.cell, r.id);
     for (const d of data.devices) {
-      const rack = this.rack(d.rack ?? 'rack-1');
+      const rack = this.rack(d.rack);
       if (!rack) continue; // 그 랙이 없음 (깨진 저장)
       const device = isSideDef(d.defId) ? this.addSide(d.defId, rack.id, d.side, d.id) : d.u === null ? null : this.install(d.defId, d.u, rack.id, d.id);
       if (!device) continue;
@@ -485,7 +486,7 @@ export class Room {
     }
     const portById = new Map(this.world.ports.map((p) => [p.id, p]));
     for (const saved of data.cables) {
-      const c = this.addCable(saved.kind, saved);
+      const c = this.addCable(saved.kind, saved, saved.length ?? CABLE_DEFAULT_LENGTH);
       c.paid = saved.paid ?? 0;
       const { rope } = c;
       if (saved.nodes.length === rope.pos.length) {

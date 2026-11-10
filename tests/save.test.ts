@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
+import { CABLES, SHOP_CABLES } from '../src/data/catalog';
 import { plug, unplug } from '../src/cable/plug';
 import { loadSave, parseSave, SAVE_KEY, SAVE_VERSION, writeSave, type SaveData } from '../src/game/save';
 import { createStartRoom, restoreRoom, type Room } from '../src/view/room';
@@ -81,7 +82,7 @@ describe('save', () => {
 
   it('줄이기 도구 시절 저장의 길이(length)는 무시하고 기본 2m', () => {
     const { data } = roundTrip(startRoom());
-    const old = { ...data, cables: data.cables.map((c) => ({ ...c, length: 0.9 })) };
+    const old = { ...data, v: 1, cables: data.cables.map((c) => ({ ...c, length: 0.9 })) };
     const fromOld = restoreRoom(new THREE.Scene(), parseSave(JSON.stringify(old))!);
     expect(fromOld.world.cables[2].rope.length).toBeCloseTo(2, 3);
   });
@@ -110,5 +111,56 @@ describe('save', () => {
     const store = memoryStorage();
     store.setItem(SAVE_KEY, 'garbage');
     expect(loadSave(store)).toBeNull();
+  });
+});
+
+describe('save v2: 랙 목록·긴 랜선', () => {
+  it('랙 2대·10m 선 왕복', () => {
+    const room = startRoom();
+    const r2 = room.addRack([1, 0])!;
+    const sw2 = room.install('switch-24', 1, r2.id)!;
+    const sw1 = room.devices.find((d) => d.def.id === 'switch-8')!;
+    const c = room.spawnCable('lan', 50, 10, 'rack-2');
+    plug(c, 0, sw1.ports.find((p) => p.kind === 'lan' && !p.plugged)!);
+    plug(c, 1, sw2.ports.find((p) => p.kind === 'lan' && !p.plugged)!);
+    expect(room.routeCable(c, 'rack-1:tray')).toBe(true);
+    const { back } = roundTrip(room);
+    expect(back.racks.map((r) => [r.id, r.cell])).toEqual(room.racks.map((r) => [r.id, r.cell]));
+    const b = back.world.cables.find((x) => x.id === c.id)!;
+    expect(b.rope.length).toBe(10);
+    expect(b.route).toEqual(c.route);
+    const sw2b = back.devices.find((d) => d.id === sw2.id)!;
+    expect(sw2b.ports.map((p) => p.pos)).toEqual(sw2.ports.map((p) => p.pos));
+  });
+
+  it('v1 저장은 rack-1 한 대로 읽음', () => {
+    const snap: Record<string, unknown> = { ...startRoom().snapshot() };
+    delete snap.racks;
+    snap.devices = (snap.devices as Record<string, unknown>[]).map((d) => {
+      const { rack: _r, ...rest } = d;
+      return rest;
+    });
+    const data = parseSave(JSON.stringify({ v: 1, money: 5, bought: {}, ...snap }))!;
+    expect(data).not.toBeNull();
+    expect(data.racks).toEqual([{ id: 'rack-1', cell: [0, 0] }]);
+    expect(restoreRoom(new THREE.Scene(), data).summary.incomePerSec).toBe(1);
+  });
+
+  it('경로 하나가 깨져도 나머지는 불러옴', () => {
+    const snap = toSave(startRoom());
+    snap.cables = snap.cables.slice(0, 2).map((c) => ({ ...c, route: { guides: ['g'], tied: [] } }));
+    const bad = JSON.parse(JSON.stringify(snap));
+    bad.cables[0].route.guides = [1];
+    const data = parseSave(JSON.stringify(bad))!;
+    expect(data).not.toBeNull();
+    expect(data.cables[0].route).toBeUndefined();
+    expect(data.cables[1].route).toEqual({ guides: ['g'], tied: [] });
+  });
+
+  it('상점 10m 랜선은 50원, 길이 10', () => {
+    expect(CABLES['cable-lan-long']).toMatchObject({ price: 50, length: 10, kind: 'lan' });
+    expect(CABLES['cable-lan'].length).toBe(2);
+    expect(CABLES['cable-power'].length).toBe(2);
+    expect(SHOP_CABLES).toEqual(['cable-lan', 'cable-lan-long', 'cable-power']);
   });
 });

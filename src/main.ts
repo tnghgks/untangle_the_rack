@@ -265,7 +265,7 @@ const shop = createShop(hud.shopPanel, {
   },
   onBuyCable: (id) => {
     if (!spend(state, CABLES[id].price)) return;
-    const cable = room.spawnCable(CABLES[id].kind, CABLES[id].price);
+    const cable = room.spawnCable(CABLES[id].kind, CABLES[id].price, CABLES[id].length);
     shop.refresh();
     // 손 도구로 바꾸고 한쪽 끝을 든 채로 → 포트 위에서 클릭하면 바로 꽂힘
     events.emit('tool:set', 'hand');
@@ -311,7 +311,7 @@ const save = () => {
   const data: SaveData = { v: SAVE_VERSION, money: state.money, bought: { ...state.bought }, ...room.snapshot() };
   // 손에 든 뺀 장비는 원래 자리에 있는 것으로 저장 (그 칸은 다른 장비가 못 씀 — 한 번에 하나만 듦)
   const m = placement.moving;
-  if (m && placement.held) data.devices.push({ id: m.id, defId: placement.held, u: m.u, side: null, on: m.on, tripped: false });
+  if (m && placement.held) data.devices.push({ id: m.id, defId: placement.held, u: m.u, side: null, on: m.on, tripped: false, rack: room.devices.find((d) => d.id === m.id)?.rack ?? 'rack-1' });
   writeSave(store, data);
 };
 window.setInterval(save, 10_000);

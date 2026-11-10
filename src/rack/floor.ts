@@ -5,7 +5,7 @@ import { REACH_SLACK } from '../cable/route';
 import type { Vec3 } from '../cable/collide';
 import type { Guide } from '../cable/guide';
 import { SIDE_RING_X, SIDE_RING_Z } from '../cable/manager';
-import { RACK_HEIGHT, U, uBottomY } from '../data/units';
+import { LONG_LAN_LENGTH, RACK_HEIGHT, U, uBottomY } from '../data/units';
 
 /** (x칸, z칸) */
 export type Cell = readonly [number, number];
@@ -53,7 +53,7 @@ export function trayGuide(r: RackPlace): Guide {
   };
 }
 
-export const LONG_LAN_LENGTH = 10;
+export { LONG_LAN_LENGTH };
 
 /** U1 포트 → 트레이 오름 */
 const CLIMB = TRAY_Y - (uBottomY(1) + U / 2);

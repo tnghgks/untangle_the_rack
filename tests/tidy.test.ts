@@ -311,11 +311,13 @@ describe('경로에 넣기·묶기·풀기', () => {
     expect(d.rope.frozen).toBe(false);
   });
 
-  it('route 형식이 틀린 저장은 버림, 옛 ties 저장은 불러옴', () => {
+  it('route 형식이 틀린 선은 route만 버리고 불러옴, 옛 ties 저장은 불러옴', () => {
     const room = newRoom();
     const snap = room.snapshot();
     const bad = { v: SAVE_VERSION, money: 0, bought: {}, ...snap, cables: snap.cables.map((c) => ({ ...c, route: { guides: [1], tied: [] } })) };
-    expect(parseSave(JSON.stringify(bad))).toBeNull();
+    const parsed = parseSave(JSON.stringify(bad))!;
+    expect(parsed.cables.length).toBe(snap.cables.length);
+    expect(parsed.cables.every((c) => c.route === undefined)).toBe(true);
     const old = { v: SAVE_VERSION, money: 0, bought: {}, ...snap, cables: snap.cables.map((c) => ({ ...c, ties: [{ node: 3, pos: [0, 0, 0] }] })) };
     expect(parseSave(JSON.stringify(old))).not.toBeNull();
   });
