@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { CABLES, DEVICES, START_MONEY, type DeviceDefId } from '../src/data/catalog';
+import { CABLES, DEVICES, RACK_DEF, START_MONEY, type DeviceDefId } from '../src/data/catalog';
 import { paybackSec, priceOf, spend, tick } from '../src/game/economy';
-import { createGameState } from '../src/game/state';
+import { boughtCount, createGameState } from '../src/game/state';
 import { PDU_LAYOUT, PDU_SIDES } from '../src/rack/device';
 
 const SERVERS: DeviceDefId[] = ['server-entry', 'server-web', 'server-storage', 'server-gpu'];
@@ -12,6 +12,14 @@ describe('priceOf', () => {
     expect(priceOf(web, 0)).toBe(400);
     expect(priceOf(web, 1)).toBe(500);
     expect(priceOf(web, 2)).toBe(625);
+  });
+});
+
+describe('랙 값', () => {
+  it('랙 값은 100,000원에서 1.25배씩', () => {
+    expect(priceOf(RACK_DEF, 0)).toBe(100000);
+    expect(priceOf(RACK_DEF, 1)).toBe(125000);
+    expect(boughtCount(createGameState(0), 'rack')).toBe(0);
   });
 });
 

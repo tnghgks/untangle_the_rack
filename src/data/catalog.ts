@@ -119,3 +119,6 @@ export const CABLES: Record<CableDefId, CableDef> = {
 export const SHOP_DEVICES: DeviceDefId[] = ['server-entry', 'server-web', 'server-storage', 'server-gpu', 'switch-24', 'pdu', 'cable-manager', 'cable-manager-v'];
 export const SHOP_CABLES: CableDefId[] = ['cable-lan', 'cable-lan-long', 'cable-power'];
 
+
+/** 랙: 장비가 아니라 바닥에 세우는 것. 해금 없이 늘 살 수 있고, 살 때마다 ×PRICE_GROWTH */
+export const RACK_DEF = { id: 'rack', name: '랙', price: 100000 } as const;

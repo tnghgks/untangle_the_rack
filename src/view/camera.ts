@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { events, type ViewMode } from '../core/events';
 import { RACK_HEIGHT } from '../data/units';
+import type { Vec3 } from '../cable/collide';
 
 // 자유 회전은 항상 가능. 앞면/뒷면 버튼은 작업 시점으로 부드럽게 이동만 한다.
 // 사용자가 직접 돌리기 시작하면 모드는 'free'로 돌아간다.
@@ -21,6 +22,10 @@ const PRESETS: Record<ViewMode, THREE.Vector3> = {
 export interface CameraRig {
   controls: OrbitControls;
   update(dtSec: number): void;
+  /** 랙 자리 고르기: 지금 시점을 기억하고 center 위에서 내려다봄 */
+  overview(center: Vec3): void;
+  /** 기억한 시점으로 돌아감 */
+  leaveOverview(): void;
 }
 
 export function createCameraRig(camera: THREE.PerspectiveCamera, dom: HTMLElement): CameraRig {
@@ -30,7 +35,7 @@ export function createCameraRig(camera: THREE.PerspectiveCamera, dom: HTMLElemen
   controls.enableDamping = true;
   controls.dampingFactor = 0.12;
   controls.minDistance = 0.4;
-  controls.maxDistance = 7;
+  controls.maxDistance = 14;
   controls.maxPolarAngle = Math.PI * 0.495; // 바닥 아래로 못 내려감
   controls.screenSpacePanning = true;
   // 회전은 가운데 버튼, 팬은 오른쪽 버튼 또는 Shift+왼쪽. 왼쪽 드래그 회전은 없음 (10-25 플레이 피드백)
@@ -50,7 +55,9 @@ export function createCameraRig(camera: THREE.PerspectiveCamera, dom: HTMLElemen
   });
   controls.update();
 
-  let tween: { fromPos: THREE.Vector3; toPos: THREE.Vector3; fromTarget: THREE.Vector3; t: number } | null = null;
+  let tween: { fromPos: THREE.Vector3; toPos: THREE.Vector3; fromTarget: THREE.Vector3; toTarget: THREE.Vector3; t: number } | null = null;
+  /** 내려다보기 직전의 시점 (끝나면 비움) */
+  let remembered: { pos: THREE.Vector3; target: THREE.Vector3 } | null = null;
   let mode: ViewMode = 'free';
 
   const setMode = (next: ViewMode) => {
@@ -63,6 +70,7 @@ export function createCameraRig(camera: THREE.PerspectiveCamera, dom: HTMLElemen
     tween = {
       fromPos: camera.position.clone(),
       toPos: PRESETS[next].clone(),
+      toTarget: TARGET.clone(),
       fromTarget: controls.target.clone(),
       t: 0,
     };
@@ -74,14 +82,30 @@ export function createCameraRig(camera: THREE.PerspectiveCamera, dom: HTMLElemen
     setMode('free');
   });
 
+  const startTween = (toPos: THREE.Vector3, toTarget: THREE.Vector3) => {
+    tween = { fromPos: camera.position.clone(), toPos, fromTarget: controls.target.clone(), toTarget, t: 0 };
+  };
+
   return {
     controls,
+    overview(center) {
+      // 이미 내려다보는 중이면 처음 기억을 그대로 둠
+      remembered ??= { pos: camera.position.clone(), target: controls.target.clone() };
+      const c = new THREE.Vector3(...center);
+      startTween(c.clone().add(new THREE.Vector3(0, 9, 6)), c);
+    },
+    leaveOverview() {
+      if (!remembered) return;
+      // 그새 focus가 불렸으면 그 랙 기준 자리로 돌아가야 함 — Task 7에서 focus와 함께 처리
+      startTween(remembered.pos, remembered.target);
+      remembered = null;
+    },
     update(dtSec) {
       if (tween) {
         tween.t = Math.min(1, tween.t + dtSec / TWEEN_SEC);
         const k = easeInOut(tween.t);
         camera.position.lerpVectors(tween.fromPos, tween.toPos, k);
-        controls.target.lerpVectors(tween.fromTarget, TARGET, k);
+        controls.target.lerpVectors(tween.fromTarget, tween.toTarget, k);
         if (tween.t >= 1) tween = null;
       }
       controls.update();
