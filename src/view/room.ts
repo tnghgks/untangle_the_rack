@@ -235,7 +235,7 @@ export class Room {
     for (const end of [0, 1] as const) unplug(cable, end);
     this.world.cables.splice(i, 1);
     for (const order of this.tieOrder.values()) removeWhere(order, (x) => x === cable);
-    const k =this.meshes.findIndex((m) => m.cable === cable);
+    const k = this.meshes.findIndex((m) => m.cable === cable);
     if (k >= 0) {
       this.scene.remove(this.meshes[k].group);
       this.meshes[k].dispose();
