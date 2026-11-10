@@ -30,30 +30,68 @@ function clampTo(g: Guide, p: Vec3): Vec3 {
 
 const stubPoint = (p: Port): Vec3 => [p.pos[0] + p.dir[0] * STUB, p.pos[1] + p.dir[1] * STUB, p.pos[2] + p.dir[2] * STUB];
 
-/** 꺾은선: a → 스텁 → 각 가이드 [들어가는 점, 나가는 점] → 스텁 → b */
-export function routePath(a: Port, b: Port, seq: readonly Guide[], lanes: readonly LaneOffset[] = []): Vec3[] {
+/** 차선만큼 옮긴 가이드 (가이드 축에 수직인 두 방향: 가로 [y, z], 세로 [x, z]) */
+function shifted(g: Guide, off: LaneOffset | undefined): Guide {
+  if (!off) return g;
+  const i0 = g.axis === 0 ? 1 : 0;
+  const mv = (p: Vec3): Vec3 => {
+    const q: Vec3 = [p[0], p[1], p[2]];
+    q[i0] += off.d[0];
+    q[2] += off.d[1];
+    return q;
+  };
+  return { ...g, a: mv(g.a), b: mv(g.b) };
+}
+
+/**
+ * p에서 가이드 g 위 점 q까지 한 축씩 직각으로: z(랙 앞뒤) → 가이드에 수직 → 가이드 축.
+ * 꺾이는 점들을 돌려줌, 마지막은 늘 q
+ */
+function approach(p: Vec3, q: Vec3, g: Guide): Vec3[] {
+  const cur: Vec3 = [p[0], p[1], p[2]];
+  const out: Vec3[] = [];
+  for (const i of [2, g.axis === 0 ? 1 : 0, g.axis]) {
+    if (cur[i] === q[i]) continue;
+    cur[i] = q[i];
+    out.push([cur[0], cur[1], cur[2]]);
+  }
+  if (out.length === 0) out.push([q[0], q[1], q[2]]);
+  return out;
+}
+
+export interface RouteLayout {
+  pts: Vec3[];
+  /** k번째 가이드를 따라가는 구간의 [들어가는 점, 나가는 점] pts 인덱스 */
+  spans: [number, number][];
+}
+
+/** 꺾은선: a → 스텁 → (직각으로 꺾어) 각 가이드 [들어가는 점 → 나가는 점] → (직각으로) 스텁 → b */
+export function routeLayout(a: Port, b: Port, seq: readonly Guide[], lanes: readonly LaneOffset[] = []): RouteLayout {
   const sa = stubPoint(a);
   const sb = stubPoint(b);
+  const gs = seq.map((g, k) => shifted(g, lanes[k]));
   const pts: Vec3[] = [a.pos, sa];
+  const spans: [number, number][] = [];
   let prev = sa;
-  seq.forEach((g, k) => {
+  gs.forEach((g, k) => {
     const inP = clampTo(g, prev);
-    const next = k + 1 < seq.length ? clampTo(seq[k + 1]!, inP) : sb;
+    const next = k + 1 < gs.length ? clampTo(gs[k + 1]!, inP) : sb;
     const outP = clampTo(g, next);
-    const off = lanes[k];
-    if (off) {
-      // 가이드 축에 수직인 두 방향: 가로 [y, z], 세로 [x, z]
-      const i0 = g.axis === 0 ? 1 : 0;
-      for (const p of [inP, outP]) {
-        p[i0] += off.d[0];
-        p[2] += off.d[1];
-      }
-    }
-    pts.push(inP, outP);
+    pts.push(...approach(prev, inP, g));
+    const i0 = pts.length - 1;
+    pts.push(outP);
+    spans.push([i0, pts.length - 1]);
     prev = outP;
   });
+  const last = gs[gs.length - 1];
+  // 나갈 때는 b 쪽에서 들어오는 것과 같은 꺾임을 거꾸로
+  if (last) pts.push(...approach(sb, prev, last).reverse().slice(1));
   pts.push(sb, b.pos);
-  return pts;
+  return { pts, spans };
+}
+
+export function routePath(a: Port, b: Port, seq: readonly Guide[], lanes: readonly LaneOffset[] = []): Vec3[] {
+  return routeLayout(a, b, seq, lanes).pts;
 }
 
 export function pathLength(pts: readonly Vec3[]): number {
@@ -64,11 +102,12 @@ export function pathLength(pts: readonly Vec3[]): number {
 
 /** 점수 = 전체 길이 + FREE_WEIGHT × 가이드 밖 구간 길이 (작을수록 좋음) */
 export function routeScore(a: Port, b: Port, seq: readonly Guide[]): number {
-  const pts = routePath(a, b, seq);
-  // pts = [a, 스텁, (in, out)*, 스텁, b] — 가이드 밖 구간은 스텁 이후 out→다음 in 사이(인덱스 1→2, 3→4, ...)
-  let free = 0;
-  for (let i = 1; i < pts.length - 2; i += 2) free += dist(pts[i]!, pts[i + 1]!);
-  return pathLength(pts) + FREE_WEIGHT * free;
+  const { pts, spans } = routeLayout(a, b, seq);
+  const total = pathLength(pts);
+  // 가이드 밖 = 스텁 사이 전체 − 가이드를 따라가는 구간
+  let free = total - dist(pts[0]!, pts[1]!) - dist(pts[pts.length - 2]!, pts[pts.length - 1]!);
+  for (const [i, j] of spans) free -= dist(pts[i]!, pts[j]!);
+  return total + FREE_WEIGHT * free;
 }
 
 /** dropped를 포함하는 서로 다른 가이드 1~MAX_GUIDES개의 모든 순서 */

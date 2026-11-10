@@ -4,7 +4,7 @@ import { CableMesh } from '../cable/cableMesh';
 import type { Aabb, Vec3 } from '../cable/collide';
 import { guideOf, type Guide } from '../cable/guide';
 import { plug, unplug, type PortHit } from '../cable/plug';
-import { findRoute, laneOffsets, routePath, tidyDegree, type LaneOffset } from '../cable/route';
+import { findRoute, laneOffsets, routeLayout, tidyDegree, type LaneOffset, type RouteLayout } from '../cable/route';
 import { events } from '../core/events';
 import { createRng } from '../core/rng';
 import { isSideDef, type DeviceDefId, type SideDefId } from '../data/catalog';
@@ -351,9 +351,9 @@ export class Room {
       if (seq.some((g) => !g)) continue;
       const tights = route.guides.map((id) => (route.tied.includes(id) ? 1 : tight?.get(id) ?? 0));
       const lanes: LaneOffset[] = route.guides.map((id) => lanesOf(id).get(c)!);
-      const pts = routePath(a, b, seq as Guide[], lanes);
-      c.rope.setPath(pts);
-      wobble(c, pts, tights);
+      const layout = routeLayout(a, b, seq as Guide[], lanes);
+      c.rope.setPath(layout.pts);
+      wobble(c, layout, tights);
     }
   }
 
@@ -461,9 +461,9 @@ export class Room {
 
 /**
  * 묶이지 않은 가이드 구간 마디를 z로 사인 모양 흔듦 (진폭 WOBBLE × (1 - tight)).
- * pts = routePath 꺾은선 [a, 스텁, (들어감, 나감)*, 스텁, b] — 마디는 setPath가 호 길이로 고르게 깔아 둠
+ * layout = routeLayout 꺾은선과 가이드 구간 인덱스 — 마디는 setPath가 호 길이로 고르게 깔아 둠
  */
-function wobble(c: Cable, pts: readonly Vec3[], tights: readonly number[]): void {
+function wobble(c: Cable, { pts, spans }: RouteLayout, tights: readonly number[]): void {
   const { rope } = c;
   const cum = [0];
   for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + polylineLength([pts[i - 1], pts[i]]));
@@ -472,7 +472,7 @@ function wobble(c: Cable, pts: readonly Vec3[], tights: readonly number[]): void
   tights.forEach((t, k) => {
     const amp = WOBBLE * (1 - t);
     if (amp <= 0) return;
-    const s0 = cum[2 + 2 * k], s1 = cum[3 + 2 * k];
+    const s0 = cum[spans[k]![0]], s1 = cum[spans[k]![1]];
     for (let i = 0; i < rope.n; i++) {
       const d = (total * i) / (rope.n - 1);
       if (d <= s0 || d >= s1) continue;

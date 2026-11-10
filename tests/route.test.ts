@@ -57,6 +57,24 @@ describe('가이드와 경로 찾기', () => {
     }
   });
 
+  it('경로는 직각으로만 꺾임 (대각선 구간 없음, 차선이 있어도)', () => {
+    const room = newRoom();
+    const h = guideOf(room.install('cable-manager', 10)!)!;
+    const v = guideOf(room.addSide('cable-manager-v')!)!;
+    const lane = { d: [0.007, -0.007] as [number, number] };
+    for (const { a, b } of cableEnds(room)) {
+      for (const seq of [[h], [v], [h, v], [v, h]]) {
+        const pts = routePath(a, b, seq, seq.map(() => lane));
+        // 포트 → 스텁 구간(첫·끝)은 포트 방향 그대로라 빼고 검사
+        for (let i = 2; i < pts.length - 1; i++) {
+          const p = pts[i - 1]!, q = pts[i]!;
+          const moved = [0, 1, 2].filter((k) => Math.abs(p[k]! - q[k]!) > 1e-9);
+          expect(moved.length, `seq=${seq.map((g) => g.axis)} seg ${i}`).toBeLessThanOrEqual(1);
+        }
+      }
+    }
+  });
+
   it('세로 매니저가 있어도 가로 단독보다 점수가 나쁘지 않은 경로를 고름', () => {
     const room = newRoom();
     const h = guideOf(room.install('cable-manager', 20)!)!;
