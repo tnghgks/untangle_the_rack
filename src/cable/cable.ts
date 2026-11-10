@@ -26,6 +26,8 @@ export interface Cable {
   paid: number;
   /** 가이드 경로에 들었으면 그 경로 (null = 늘어진 로프) */
   route: Route | null;
+  /** 경로 선의 촘촘한 모양 [x,y,z]* (둥근 꺾임까지) — 메시는 이걸로 그림. 늘어진 로프면 null (로프 마디로 그림) */
+  shape: Float32Array | null;
 }
 
 /** 가이드 경로: 지나는 가이드(매니저 id) 순서와 그중 벨크로로 묶은 가이드 */
@@ -37,7 +39,7 @@ export interface Route {
 export const CABLE_RADIUS: Record<PortKind, number> = { lan: 0.003, power: 0.004 };
 
 export function createCable(id: string, kind: PortKind, length: number, color: number): Cable {
-  return { id, kind, rope: new Rope(length, { radius: CABLE_RADIUS[kind] }), ends: [null, null], color, paid: 0, route: null };
+  return { id, kind, rope: new Rope(length, { radius: CABLE_RADIUS[kind] }), ends: [null, null], color, paid: 0, route: null, shape: null };
 }
 
 export function endNode(cable: Cable, end: CableEnd): number {

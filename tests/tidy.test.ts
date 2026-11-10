@@ -26,11 +26,13 @@ const dist = (p: readonly number[], q: readonly number[]) => Math.hypot(p[0]! - 
  */
 function guideNodes(c: Cable, g: Guide): [number, number, number][] {
   const out: [number, number, number][] = [];
-  for (let i = 0; i < c.rope.n - 1; i++) {
-    const p = node(c, i), q = node(c, i + 1);
+  const flat = (p: [number, number, number], q: [number, number, number]) => Math.abs(p[1] - q[1]) < 1e-3 && Math.abs(p[0] - q[0]) > 1e-3;
+  for (let i = 0; i < c.rope.n; i++) {
+    const p = node(c, i);
     if (p[0] < g.a[0] || p[0] > g.b[0]) continue;
     if (Math.hypot(p[1] - g.a[1], p[2] - g.a[2]) >= 0.03) continue;
-    if (Math.abs(p[1] - q[1]) < 1e-3 && Math.abs(p[0] - q[0]) > 1e-3) out.push(p);
+    // 평평한 구간의 양 끝 마디까지 (둥근 꺾임 바로 앞 마디도)
+    if ((i + 1 < c.rope.n && flat(p, node(c, i + 1))) || (i > 0 && flat(node(c, i - 1), p))) out.push(p);
   }
   return out;
 }
@@ -206,7 +208,7 @@ describe('경로에 넣기·묶기·풀기', () => {
     expect(b.rope.frozen).toBe(true);
   });
 
-  it('매니저를 옮겨도 (같은 id로 다시 끼우고 routeWith) 경로·묶음·차선 순서 그대로', () => {
+  it('매니저를 옮겨도 (같은 id로 다시 끼우고 routeWith) 경로·묶음 그대로, 차선은 새 자리에 맞게 안 겹침', () => {
     const { room, g } = roomWithGuide();
     const [p0, p1, lan] = room.world.cables as [Cable, Cable, Cable];
     room.routeCable(lan, g.id);
@@ -214,17 +216,14 @@ describe('경로에 넣기·묶기·풀기', () => {
     room.routeCable(p0, g.id);
     room.routeCable(p1, g.id);
     room.tieGuide(g.id);
-    const lanesNow = () => [lan, p0, p1].map((c) => room.laneMap(g.id).get(c)!.d);
-    const lanes = lanesNow();
-    expect(lanes[0]![0]).toBeLessThan(lanes[1]![0]); // 먼저 묶은 랜선이 첫 차선
     const kept = room.world.cables.map((cable) => ({ cable, guides: [...cable.route!.guides], tied: [...cable.route!.tied] }));
     const device = room.device(g.id)!;
     expect(room.remove(device)).toBe(true);
     for (const c of room.world.cables) expect(c.route).toBeNull();
-    expect(room.install('cable-manager', 12, g.id)).not.toBeNull();
+    const moved = guideOf(room.install('cable-manager', 12, g.id)!)!;
     for (const { cable, guides, tied } of kept) expect(room.routeWith(cable, guides, tied)).toBe(true);
     for (const c of room.world.cables) expect(c.route).toEqual({ guides: [g.id], tied: [g.id] });
-    expect(lanesNow()).toEqual(lanes);
+    expectNoOverlap([lan, p0, p1], moved);
   });
 
   it('선을 뽑으면 경로에서 빠짐', () => {

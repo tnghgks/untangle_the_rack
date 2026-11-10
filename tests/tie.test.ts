@@ -31,12 +31,18 @@ describe('벨크로 띠 자리', () => {
       expect(rings.some((x) => Math.abs(x - s.center[0]) < 1e-9)).toBe(true);
       // 띠 자리 x에서 가장 가까운 마디가 띠 단면 안에 듦
       for (const c of room.world.cables) {
-        let best = node(c, 0);
+        // 띠 자리 x 근처(2cm) 마디 중 띠 단면 중심에 가장 가까운 것 (포트에서 위아래로 들어오는 마디도 근처에 있을 수 있음)
+        let best: ReturnType<typeof node> | null = null;
+        let left = false, right = false;
+        const off = (p: ReturnType<typeof node>) => Math.hypot(p[1] - s.center[1], p[2] - s.center[2]);
         for (let i = 0; i < c.rope.n; i++) {
           const p = node(c, i);
-          if (Math.abs(p[1] - g.a[1]) < 0.03 && Math.abs(p[2] - g.a[2]) < 0.03 && Math.abs(p[0] - s.center[0]) < Math.abs(best[0] - s.center[0])) best = p;
+          if (Math.abs(p[0] - s.center[0]) > 0.02 || off(p) > 0.03) continue;
+          if (p[0] <= s.center[0]) left = true;
+          if (p[0] >= s.center[0]) right = true;
+          if (!best || off(p) < off(best)) best = p;
         }
-        if (Math.abs(best[0] - s.center[0]) > 0.02) continue; // 이 고리 자리를 안 지나는 선
+        if (!best || !left || !right) continue; // 이 고리 자리를 가로질러 지나지 않는 선 (근처에서 위아래로 빠지기만 함)
         expect(Math.abs(best[1] - s.center[1])).toBeLessThan(s.wrap / 2);
         expect(Math.abs(best[2] - s.center[2])).toBeLessThan(s.depth / 2);
       }

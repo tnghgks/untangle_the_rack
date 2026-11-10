@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { Port } from '../src/cable/cable';
 import { guideOf } from '../src/cable/guide';
 import { SIDE_RING_X } from '../src/cable/manager';
-import { findRoute, laneOffset, laneOffsets, NEAR, routePath } from '../src/cable/route';
+import { findRoute, laneKey, laneOffset, laneOffsets, laneOrder, NEAR, resample, routeLayout, routePath, smoothLayout } from '../src/cable/route';
 import { createStartRoom, type Room } from '../src/view/room';
 
 const newRoom = (): Room => createStartRoom(new THREE.Scene(), new THREE.Group());
@@ -21,8 +21,39 @@ describe('가이드와 경로 찾기', () => {
     const { a, b } = lanEnds(room);
     expect(Math.abs(a.pos[1] - h.a[1])).toBeLessThanOrEqual(NEAR);
     expect(findRoute(a, b, [h], h.id)).toEqual([h]);
-    const pts = routePath(a, b, [h], [{ d: [0.007, -0.007] }]);
+    const pts = routeLayout(a, b, [h], [{ d: [0.007, -0.007] }]).pts; // 둥글게 하기 전 꺾은선
     for (let i = 2; i < pts.length - 1; i++) expect(axisAligned(pts[i - 1]!, pts[i]!), `seg ${i}`).toBe(true);
+  });
+
+  it('둥글게 한 경로는 급하게 꺾이지 않고, 포트 앞은 곧게 나옴 (1cm 이상)', () => {
+    const room = newRoom();
+    const h = guideOf(room.install('cable-manager', 2)!)!;
+    const v = guideOf(room.addSide('cable-manager-v')!)!;
+    for (const { a, b } of cableEnds(room)) {
+      for (const seq of [[h], [v], [h, v]]) {
+        const raw = routeLayout(a, b, seq);
+        const sm = smoothLayout(raw);
+        expect(sm.spans).toHaveLength(seq.length);
+        const pts = resample(sm.pts, 300);
+        let worst = 0;
+        for (let i = 2; i < pts.length; i++) {
+          const u = pts[i - 1]!.map((x, k) => x - pts[i - 2]![k]!), w = pts[i]!.map((x, k) => x - pts[i - 1]![k]!);
+          const lu = Math.hypot(...u), lw = Math.hypot(...w);
+          if (lu < 1e-6 || lw < 1e-6) continue;
+          // 포트 6cm 안(커넥터 쪽)은 뺌 — PDU 콘센트는 매니저보다 뒤에 있어 거기서 좁게 되돌아 꺾일 수밖에 없음
+          if (Math.hypot(...pts[i - 1]!.map((x, k) => x - a.pos[k]!)) < 0.06 || Math.hypot(...pts[i - 1]!.map((x, k) => x - b.pos[k]!)) < 0.06) continue;
+          worst = Math.max(worst, Math.acos(Math.min(1, u.reduce((s, x, k) => s + x * w[k]!, 0) / (lu * lw))));
+        }
+        expect(worst, `seq ${seq.map((g) => g.axis)}`).toBeLessThan(Math.PI / 3); // 1cm마다 60° 미만 (안 둥글린 직각은 한 번에 90°)
+        // 포트 앞: 포트 방향 그대로
+        for (const [p, end] of [[a, sm.pts[1]!], [b, sm.pts[sm.pts.length - 2]!]] as const) {
+          const d = end.map((x, k) => x - p.pos[k]!);
+          const along = d.reduce((s, x, k) => s + x * p.dir[k]!, 0);
+          expect(along).toBeGreaterThanOrEqual(0.01 - 1e-9);
+          expect(Math.hypot(...d.map((x, k) => x - along * p.dir[k]!))).toBeLessThan(1e-9);
+        }
+      }
+    }
   });
 
   it('가이드 목록에 놓은 가이드가 없으면 null', () => {
@@ -79,6 +110,30 @@ describe('가이드와 경로 찾기', () => {
     const pts = routePath(a, b, [v]);
     const low = Math.min(a.pos[1], b.pos[1]);
     expect(Math.min(...pts.map((p) => p[1]))).toBeLessThan(low - 0.03);
+  });
+
+  it('laneOrder: 아래에서 드나드는 선이 아래 차선, 같은 쪽끼리는 오래 따라가는 선이 그 쪽에서 먼 차선', () => {
+    const k = (side: number, len: number, at = 0) => ({ side, len, at });
+    // 위에서 들어와 끝으로 나감(+1): 긴 선이 아래. 아래에서(-1): 긴 선이 위. 아래 무리가 먼저
+    const keys = [k(1, 0.1), k(-1, 0.3), k(1, 0.3), k(-1, 0.1), k(0, 0, 0.2), k(0, 0, -0.1)];
+    expect(laneOrder(keys)).toEqual([3, 1, 5, 4, 2, 0]);
+  });
+
+  it('위 포트들에서 내려와 같은 쪽 끝으로 가는 선들은 서로 안 가로지름 (먼저 들어온 선이 아래 차선)', () => {
+    const room = newRoom();
+    const h = guideOf(room.install('cable-manager', 20)!)!;
+    const v = guideOf(room.addSide('cable-manager-v', 1)!)!;
+    const top = room.install('switch-8', 21)!;
+    const low = room.install('server-entry', 10)!;
+    const b = low.ports.find((p) => p.kind === 'lan')! as Port;
+    const lans = top.ports.filter((p) => p.kind === 'lan').slice(0, 4) as Port[];
+    const layouts = lans.map((a) => routeLayout(a, b, [h, v]));
+    const keys = layouts.map((l) => laneKey(l, 0, h));
+    for (const key of keys) expect(key.side).toBe(1); // 위에서 들어와 끝으로 나감
+    const order = laneOrder(keys);
+    // 차선이 아래부터: 오른쪽(세로 매니저)에서 먼 포트 = 왼쪽 포트부터
+    const xs = order.map((i) => lans[i]!.pos[0]);
+    expect(xs).toEqual([...xs].sort((p, q) => p - q));
   });
 
   it('laneOffset 차선끼리 안 겹침', () => {

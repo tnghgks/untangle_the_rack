@@ -12,18 +12,16 @@ import type { Guide } from './guide';
 import { SIDE_RING_X } from './manager';
 
 /** 포트에서 곧게 나오는 길이 */
-export const STUB = 0.03;
+export const STUB = 0.05;
 /** 포트가 이만큼(높이 차) 안이면 가로 매니저에 위아래로 곧장 들어감 */
 export const NEAR = 2.5 * U;
 /** 받침 없는 가로 구간의 처짐: 가로 길이 × SAG_K (최대 SAG_MAX) */
 export const SAG_K = 0.35;
 export const SAG_MAX = 0.18;
-const SAG_SEGS = 12;
 /** 처진 선이 바닥에서 떨어질 최소 높이 m */
 const FLOOR_GAP = 0.01;
 /** 세로 매니저 없이 랙 옆으로 늘어뜨릴 때 바깥으로 불룩한 정도 m */
 const BULGE = 0.035;
-const BULGE_SEGS = 8;
 
 /** 가이드 축에 수직인 두 방향 오프셋 m (가로 가이드: [y, z], 세로 가이드: [x, z]) */
 export interface LaneOffset {
@@ -40,7 +38,18 @@ function clampTo(g: Guide, p: Vec3): Vec3 {
   return [g.a[0] + ab[0] * t, g.a[1] + ab[1] * t, g.a[2] + ab[2] * t];
 }
 
-const stubPoint = (p: Port): Vec3 => [p.pos[0] + p.dir[0] * STUB, p.pos[1] + p.dir[1] * STUB, p.pos[2] + p.dir[2] * STUB];
+/**
+ * 포트에서 곧게 나온 점. 곧장 들어갈 가로 가이드(g)가 STUB보다 가까이 포트 앞에 있으면 그 면에서 멈춤
+ * (더 나갔다가 되돌아오지 않게 — PDU 콘센트는 장비 뒷면보다 뒤에 있음)
+ */
+function stubPoint(p: Port, g: Guide | null): Vec3 {
+  let len = STUB;
+  if (g && g.axis === 0) {
+    const d = (g.a[0] - p.pos[0]) * p.dir[0] + (g.a[1] - p.pos[1]) * p.dir[1] + (g.a[2] - p.pos[2]) * p.dir[2];
+    if (d > 1e-6 && d < STUB) len = d;
+  }
+  return [p.pos[0] + p.dir[0] * len, p.pos[1] + p.dir[1] * len, p.pos[2] + p.dir[2] * len];
+}
 
 /** 차선만큼 옮긴 가이드 (가이드 축에 수직인 두 방향: 가로 [y, z], 세로 [x, z]) */
 function shifted(g: Guide, off: LaneOffset | undefined): Guide {
@@ -63,37 +72,43 @@ function approach(p: Vec3, q: Vec3, g: Guide): Vec3[] {
   const cur: Vec3 = [p[0], p[1], p[2]];
   const out: Vec3[] = [];
   for (const i of [2, g.axis === 0 ? 1 : 0, g.axis]) {
-    if (cur[i] === q[i]) continue;
+    if (Math.abs(cur[i] - q[i]) < 1e-9) continue; // 부동소수 찌꺼기로 생기는 아주 짧은 꺾임은 건너뜀
     cur[i] = q[i];
     out.push([cur[0], cur[1], cur[2]]);
   }
   if (out.length === 0) out.push([q[0], q[1], q[2]]);
+  else out[out.length - 1] = [q[0], q[1], q[2]];
   return out;
-}
-
-/** p → q 받침 없는 구간: 곧은 선에서 가운데가 아래로 처짐. p는 빼고 q까지 */
-function sagLeg(p: Vec3, q: Vec3): Vec3[] {
-  // 바닥(y 0) 밑으로는 안 처짐 — 4t(1-t) 꼴이라 가장 낮은 점은 두 끝 중 낮은 쪽보다 drop 이상 낮지 않음
-  const floor = Math.max(0, Math.min(p[1], q[1]) - FLOOR_GAP);
-  const drop = Math.min(SAG_MAX, SAG_K * Math.hypot(q[0] - p[0], q[2] - p[2]), floor);
-  return Array.from({ length: SAG_SEGS }, (_, k) => {
-    const t = (k + 1) / SAG_SEGS;
-    return [p[0] + (q[0] - p[0]) * t, p[1] + (q[1] - p[1]) * t - drop * 4 * t * (1 - t), p[2] + (q[2] - p[2]) * t] as Vec3;
-  });
 }
 
 /**
- * 가로 가이드 끝 e에서 세로 매니저 없이 랙 옆(side 쪽)으로 나가 p 높이까지 늘어뜨린 뒤 p로 처져 감. e는 빼고 p까지
+ * 받침 없이 늘어지는 구간의 밀림: 구간 가운데에서 이만큼, 양 끝으로 갈수록 sin² 꼴로 0 (끝 기울기도 0 — 선이 뻣뻣해 끝에서 꺾이지 않음).
+ * null = 곧은 구간
  */
-function hangLeg(e: Vec3, p: Vec3, side: number): Vec3[] {
+export type Loose = Vec3 | null;
+
+/** 붙는 길 한 토막: 앞 점(따로) → pts. offs[k] = 앞 점(또는 pts[k-1]) → pts[k] 구간의 밀림 */
+interface Leg {
+  pts: Vec3[];
+  offs: Loose[];
+}
+
+const straight = (pts: Vec3[]): Leg => ({ pts, offs: pts.map(() => null) });
+
+/** start → leg 를 거꾸로: leg 마지막 점에서 start까지 */
+const reverseLeg = (start: Vec3, leg: Leg): Leg => ({ pts: [...leg.pts.slice(0, -1).reverse(), start], offs: [...leg.offs].reverse() });
+
+/** p → q 처짐 (바닥 밑으로는 안 처짐 — 가장 낮은 점은 두 끝 중 낮은 쪽보다 처짐 이상 낮지 않음) */
+function sag(p: Vec3, q: Vec3): Vec3 {
+  const floor = Math.max(0, Math.min(p[1], q[1]) - FLOOR_GAP);
+  return [0, -Math.min(SAG_MAX, SAG_K * Math.hypot(q[0] - p[0], q[2] - p[2]), floor), 0];
+}
+
+/** 가로 가이드 끝 e에서 세로 매니저 없이 랙 옆(side 쪽)으로 나가, p 높이까지 바깥으로 불룩하게 늘어뜨린 뒤 p로 처져 감 */
+function hangLeg(e: Vec3, p: Vec3, side: number): Leg {
   const x = side * SIDE_RING_X;
-  const out: Vec3[] = [[x, e[1], e[2]]];
-  for (let k = 1; k <= BULGE_SEGS; k++) {
-    const t = k / BULGE_SEGS;
-    out.push([x + side * BULGE * Math.sin(Math.PI * t), e[1] + (p[1] - e[1]) * t, e[2]]);
-  }
-  out.push(...sagLeg(out[out.length - 1]!, p));
-  return out;
+  const s1: Vec3 = [x, e[1], e[2]], s2: Vec3 = [x, p[1], e[2]];
+  return { pts: [s1, s2, p], offs: [null, [side * BULGE, 0, 0], sag(s2, p)] };
 }
 
 /** 가로 가이드에서 side 쪽 끝 */
@@ -103,17 +118,22 @@ const sideEnd = (g: Guide, side: number): Vec3 => {
 };
 
 /** 포트 쪽에서 가이드에 붙는 길: 포트 스텁 p → ... → 가이드 위 점(마지막). direct = 가로 가이드에 위아래로 곧장 */
-function attach(p: Vec3, g: Guide, direct: boolean, side: number): Vec3[] {
-  if (g.axis === 1) return sagLeg(p, clampTo(g, [g.a[0], p[1], g.a[2]]));
-  if (direct) return approach(p, clampTo(g, p), g);
+function attach(p: Vec3, g: Guide, direct: boolean, side: number): Leg {
+  if (g.axis === 1) {
+    const q = clampTo(g, [g.a[0], p[1], g.a[2]]);
+    return { pts: [q], offs: [sag(p, q)] };
+  }
+  if (direct) return straight(approach(p, clampTo(g, p), g));
   const e = sideEnd(g, side);
-  return [...hangLeg(e, p, side).reverse().slice(1), e];
+  return reverseLeg(e, hangLeg(e, p, side));
 }
 
 export interface RouteLayout {
   pts: Vec3[];
   /** k번째 가이드를 따라가는 구간의 [들어가는 점, 나가는 점] pts 인덱스 */
   spans: [number, number][];
+  /** loose[i] = pts[i] → pts[i+1] 구간의 처짐 (smoothLayout이 펼침). 없으면 다 곧음 */
+  loose?: Loose[];
 }
 
 const dy = (p: Port, g: Guide) => Math.abs(p.pos[1] - g.a[1]);
@@ -136,41 +156,148 @@ function sideOf(a: Port, b: Port, seq: readonly Guide[], direct: readonly [boole
   return x < 0 ? -1 : 1;
 }
 
-/** 꺾은선: a → 스텁 → (붙는 길) 각 가이드 [들어가는 점 → 나가는 점] (가이드끼리는 직각으로) → (붙는 길) 스텁 → b */
+/**
+ * 꺾은선(꺾이는 점만): a → 스텁 → (붙는 길) 각 가이드 [들어가는 점 → 나가는 점] (가이드끼리는 직각으로) → (붙는 길) 스텁 → b.
+ * 받침 없는 구간은 loose에 처짐만 적어 둠 — 모양은 smoothLayout이 만듦
+ */
 export function routeLayout(a: Port, b: Port, seq: readonly Guide[], lanes: readonly LaneOffset[] = []): RouteLayout {
-  const sa = stubPoint(a);
-  const sb = stubPoint(b);
   const gs = seq.map((g, k) => shifted(g, lanes[k]));
   const direct = directEnds(a, b, seq);
+  const sa = stubPoint(a, direct[0] ? gs[0] ?? null : null);
+  const sb = stubPoint(b, direct[1] ? gs[gs.length - 1] ?? null : null);
   const side = sideOf(a, b, seq, direct);
   const pts: Vec3[] = [a.pos, sa];
+  const loose: Loose[] = [null];
+  const add = (leg: Leg) =>
+    leg.pts.forEach((q, k) => {
+      loose.push(leg.offs[k] ?? null);
+      pts.push(q);
+    });
   const spans: [number, number][] = [];
   const n = gs.length;
-  // b 쪽 붙는 길 (b → 가이드 순서): 뒤집어 붙임
-  const tail = n > 0 ? attach(sb, gs[n - 1]!, direct[1], side) : [];
+  // b 쪽 붙는 길 (b 스텁 → 가이드): 끝에 거꾸로 붙임
+  const tail = n > 0 ? attach(sb, gs[n - 1]!, direct[1], side) : straight([sb]);
   let prev = sa;
   gs.forEach((g, k) => {
-    let inP: Vec3;
-    if (k === 0) {
-      pts.push(...attach(sa, g, direct[0], side));
-      inP = pts[pts.length - 1]!;
-    } else {
-      inP = clampTo(g, prev);
-      pts.push(...approach(prev, inP, g));
-    }
+    if (k === 0) add(attach(sa, g, direct[0], side));
+    else add(straight(approach(prev, clampTo(g, prev), g)));
     const i0 = pts.length - 1;
-    const outP = k === n - 1 ? tail[tail.length - 1]! : clampTo(g, clampTo(gs[k + 1]!, inP));
-    pts.push(outP);
+    const outP = k === n - 1 ? tail.pts[tail.pts.length - 1]! : clampTo(g, clampTo(gs[k + 1]!, pts[i0]!));
+    add(straight([outP]));
     spans.push([i0, pts.length - 1]);
     prev = outP;
   });
-  pts.push(...tail.reverse().slice(1));
-  pts.push(sb, b.pos);
-  return { pts, spans };
+  if (n > 0) add(reverseLeg(sb, tail));
+  else add(straight([sb]));
+  add(straight([b.pos]));
+  return { pts, spans, loose };
 }
 
+/** 꺾임을 둥글게 하는 반지름 m (실제 선이 휘는 정도) */
+export const BEND_R = 0.04;
+/** 포트 앞 이만큼은 곧게 (커넥터·부트) — 첫·끝 꺾임이 여기를 못 먹음 */
+const PLUG_STRAIGHT = 0.03;
+const BEND_SEGS = 8;
+/** 이보다 덜 꺾이면 그대로 */
+const BEND_MIN = 0.17;
+/** 처진 구간을 나누는 수 */
+const LOOSE_SEGS = 16;
+
+/**
+ * 꺾이는 점마다 반지름 BEND_R의 곡선(2차 베지어)으로 둥글게. 한 구간은 양 끝 꺾임이 반씩 나눠 쓰고,
+ * 포트 쪽 첫·끝 구간은 PLUG_STRAIGHT만 남기고 다 씀. 그다음 loose 구간을 처지게 펼침.
+ * spans는 새 점 인덱스로 옮김 (꺾임 → 곡선 가운데)
+ */
+export function smoothLayout(raw: RouteLayout, r = BEND_R): RouteLayout {
+  // 0) 겹친 점(길이 0 구간)을 뺌 — 그 자리 꺾임도 둥글게 하려고
+  const pts: Vec3[] = [];
+  const loose: Loose[] = [];
+  const idx: number[] = [];
+  let next: Loose = null; // 마지막 남긴 점에서 나가는 구간의 처짐
+  raw.pts.forEach((p, i) => {
+    const last = pts[pts.length - 1];
+    if (last && dist(last, p) < 1e-6) {
+      idx.push(pts.length - 1);
+      next = raw.loose?.[i] ?? next;
+      return;
+    }
+    if (last) loose.push(next);
+    idx.push(pts.length);
+    pts.push(p);
+    next = raw.loose?.[i] ?? null;
+  });
+  const spans = raw.spans.map(([i, j]): [number, number] => [idx[i]!, idx[j]!]);
+  const n = pts.length;
+  // 1) 꺾임마다 곧은 구간을 얼마나 먹는지 (t = 꺾는 점에서 곡선 시작까지)
+  const t = pts.map(() => 0);
+  const budget = (len: number, end: boolean) => (end ? len - Math.min(PLUG_STRAIGHT, len / 2) : len / 2);
+  for (let i = 1; i < n - 1; i++) {
+    const p = pts[i]!, a = pts[i - 1]!, b = pts[i + 1]!;
+    const la = dist(a, p), lb = dist(b, p);
+    if (la < 1e-9 || lb < 1e-9) continue;
+    const cos = ((a[0] - p[0]) * (b[0] - p[0]) + (a[1] - p[1]) * (b[1] - p[1]) + (a[2] - p[2]) * (b[2] - p[2])) / (la * lb);
+    const theta = Math.acos(Math.max(-1, Math.min(1, cos))); // 두 구간 사이 각 (π = 곧음)
+    if (Math.PI - theta < BEND_MIN) continue;
+    const ti = Math.min(r / Math.tan(theta / 2), budget(la, i === 1), budget(lb, i === n - 2));
+    if (ti >= 1e-4) t[i] = ti;
+  }
+  // 2) 펼치기
+  const out: Vec3[] = [pts[0]!];
+  const map = [0];
+  const along = (p: Vec3, q: Vec3, d: number): Vec3 => {
+    const l = dist(p, q);
+    return [p[0] + ((q[0] - p[0]) / l) * d, p[1] + ((q[1] - p[1]) / l) * d, p[2] + ((q[2] - p[2]) / l) * d];
+  };
+  for (let i = 1; i < n; i++) {
+    const a = pts[i - 1]!, p = pts[i]!;
+    const off = loose?.[i - 1];
+    if (off) {
+      const len = dist(a, p);
+      const from = t[i - 1]! / len, to = 1 - t[i]! / len;
+      for (let k = 1; k < LOOSE_SEGS; k++) {
+        const u = from + ((to - from) * k) / LOOSE_SEGS;
+        // 둥근 꺾임 사이 곧은 부분에서만 처짐 (꺾임 끝에서 0). 꺾임이 구간을 거의 다 먹었으면 그만큼 덜 처짐
+        const w = (to - from) * Math.sin((Math.PI * k) / LOOSE_SEGS) ** 2;
+        out.push([a[0] + (p[0] - a[0]) * u + off[0] * w, a[1] + (p[1] - a[1]) * u + off[1] * w, a[2] + (p[2] - a[2]) * u + off[2] * w]);
+      }
+    }
+    if (i === n - 1 || t[i] === 0) {
+      map.push(out.length);
+      out.push(p);
+      continue;
+    }
+    const b = pts[i + 1]!;
+    const p1 = along(p, a, t[i]!), p2 = along(p, b, t[i]!);
+    map.push(out.length + BEND_SEGS / 2);
+    for (let k = 0; k <= BEND_SEGS; k++) {
+      const s = k / BEND_SEGS, w0 = (1 - s) * (1 - s), w1 = 2 * (1 - s) * s, w2 = s * s;
+      out.push([p1[0] * w0 + p[0] * w1 + p2[0] * w2, p1[1] * w0 + p[1] * w1 + p2[1] * w2, p1[2] * w0 + p[2] * w1 + p2[2] * w2]);
+    }
+  }
+  return { pts: out, spans: spans.map(([i, j]) => [map[i]!, map[j]!]) };
+}
+
+/** 꺾은선 위를 호 길이로 고르게 m개 점 (양 끝 포함) */
+export function resample(pts: readonly Vec3[], m: number): Vec3[] {
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1]! + dist(pts[i - 1]!, pts[i]!));
+  const total = cum[cum.length - 1]!;
+  const out: Vec3[] = [];
+  let seg = 0;
+  for (let i = 0; i < m; i++) {
+    const d = m === 1 ? 0 : (total * i) / (m - 1);
+    while (seg < pts.length - 2 && cum[seg + 1]! < d) seg++;
+    const span = cum[seg + 1]! - cum[seg]!;
+    const u = span > 1e-9 ? (d - cum[seg]!) / span : 0;
+    const a = pts[seg]!, b = pts[Math.min(seg + 1, pts.length - 1)]!;
+    out.push([a[0] + (b[0] - a[0]) * u, a[1] + (b[1] - a[1]) * u, a[2] + (b[2] - a[2]) * u]);
+  }
+  return out;
+}
+
+/** 실제 선 모양 (둥근 꺾임·처짐까지) */
 export function routePath(a: Port, b: Port, seq: readonly Guide[], lanes: readonly LaneOffset[] = []): Vec3[] {
-  return routeLayout(a, b, seq, lanes).pts;
+  return smoothLayout(routeLayout(a, b, seq, lanes)).pts;
 }
 
 export function pathLength(pts: readonly Vec3[]): number {
@@ -210,6 +337,45 @@ export function findRoute(a: Port, b: Port, guides: readonly Guide[], dropped: s
   if (!v) return [drop];
   const other = nearestH(far, drop);
   return atA ? pick([drop, v, other]) : pick([other, v, drop]);
+}
+
+/** 한 가이드를 지나는 선 하나의 모양 (차선 순서용) */
+export interface LaneKey {
+  /** 들어올 때·나갈 때 가이드에 수직인 축(가로 y · 세로 x)에서 온 쪽 부호 합 (-2..2). 가이드 끝으로 드나들면 0 */
+  side: number;
+  /** 가이드를 따라 간 길이 */
+  len: number;
+  /** 들어오는 점의 가이드 축 좌표 */
+  at: number;
+}
+
+/** routeLayout(차선 없이)의 k번째 가이드 구간에서 그 선의 LaneKey */
+export function laneKey({ pts, spans }: RouteLayout, k: number, g: Guide): LaneKey {
+  const [i0, i1] = spans[k]!;
+  const perp = g.axis === 0 ? 1 : 0;
+  const from = (n: Vec3 | undefined, p: Vec3) => {
+    const d = n ? n[perp] - p[perp] : 0;
+    return Math.abs(d) < 1e-6 ? 0 : Math.sign(d);
+  };
+  return { side: from(pts[i0 - 1], pts[i0]!) + from(pts[i1 + 1], pts[i1]!), len: dist(pts[i0]!, pts[i1]!), at: pts[i0]![g.axis] };
+}
+
+/**
+ * 서로 가로지르지 않는 차선 순서 (차선 0 = 가이드에 수직인 축에서 가장 낮은 쪽).
+ * 아래(−)에서 드나드는 선이 아래 차선, 위(+)에서 드나드는 선이 위 차선.
+ * 같은 쪽에서 드나드는 선끼리는 가이드를 오래 따라가는 선이 그 쪽에서 먼 차선 — 짧은 선이 긴 선을 안 넘음.
+ * 돌려주는 값: 차선 순서대로 keys의 인덱스
+ */
+export function laneOrder(keys: readonly LaneKey[]): number[] {
+  return keys
+    .map((_, i) => i)
+    .sort((i, j) => {
+      const p = keys[i]!, q = keys[j]!;
+      if (p.side !== q.side) return p.side - q.side;
+      if (p.side > 0) return q.len - p.len;
+      if (p.side < 0) return p.len - q.len;
+      return p.at - q.at;
+    });
 }
 
 /** 느슨할 때(tight 0) 차선 간격 m */

@@ -4,7 +4,7 @@ import { CableMesh } from '../cable/cableMesh';
 import type { Aabb, Vec3 } from '../cable/collide';
 import { guideOf, type Guide } from '../cable/guide';
 import { plug, unplug, type PortHit } from '../cable/plug';
-import { findRoute, laneOffsets, routeLayout, tidyDegree, type LaneOffset, type RouteLayout } from '../cable/route';
+import { findRoute, laneKey, laneOffsets, laneOrder, resample, routeLayout, smoothLayout, tidyDegree, type LaneOffset, type RouteLayout } from '../cable/route';
 import { events } from '../core/events';
 import { createRng } from '../core/rng';
 import { isSideDef, type DeviceDefId, type SideDefId } from '../data/catalog';
@@ -28,6 +28,8 @@ export const TIDY_POWER_CUT = 0.15;
 const WOBBLE = 0.008;
 /** 구불거림 주기 m */
 const WOBBLE_PERIOD = 0.25;
+/** 경로 선 모양 점 간격 m (메시가 이 모양을 따라 그림) */
+const SHAPE_STEP = 0.008;
 
 function polylineLength(pts: Vec3[]): number {
   let L = 0;
@@ -49,8 +51,6 @@ export class Room {
   private serial = 0;
   /** 케이블 id 번호 — 팔아도 되돌리지 않아 id가 겹치지 않음 (불러오면 저장된 id의 가장 큰 번호 다음부터) */
   private cableSerial = 0;
-  /** 가이드마다 선을 묶은 순서 (차선 순서). 풀린 선이 남아 있어도 laneMap이 지금 묶인 선만 고름 */
-  private readonly tieOrder = new Map<string, Cable[]>();
   private spawned = 0;
   private stressCables: Cable[] = [];
   private readonly rng = createRng(42);
@@ -234,7 +234,6 @@ export class Room {
     this.unroute(cable);
     for (const end of [0, 1] as const) unplug(cable, end);
     this.world.cables.splice(i, 1);
-    for (const order of this.tieOrder.values()) removeWhere(order, (x) => x === cable);
     const k = this.meshes.findIndex((m) => m.cable === cable);
     if (k >= 0) {
       this.scene.remove(this.meshes[k].group);
@@ -264,11 +263,6 @@ export class Room {
     if (!cable.ends[0] || !cable.ends[1] || guideIds.length === 0) return false;
     const have = new Set(this.guides().map((g) => g.id));
     if (!guideIds.every((id) => have.has(id))) return false;
-    // 묶은 순서는 그대로 (옮기기 뒤에도 같은 차선). 처음 보는 선만 뒤에 붙임
-    for (const id of tied) {
-      const order = this.tieOrderOf(id);
-      if (!order.includes(cable)) order.push(cable);
-    }
     this.setRoute(cable, [...guideIds], [...tied]);
     return true;
   }
@@ -284,6 +278,7 @@ export class Room {
     const route = cable.route;
     if (!route) return;
     cable.route = null;
+    cable.shape = null;
     cable.rope.frozen = false;
     cable.rope.wake();
     for (const id of route.guides) this.relayout(id);
@@ -294,38 +289,31 @@ export class Room {
   tieGuide(guideId: string): Cable[] {
     const tied = this.world.cables.filter((c) => c.route?.guides.includes(guideId) && !c.route.tied.includes(guideId));
     if (tied.length === 0) return tied;
-    // 새로 묶인 선은 묶인 순서 맨 뒤로 (전에 묶였다 풀린 선도)
-    const order = this.tieOrderOf(guideId);
-    for (const c of tied) {
-      c.route!.tied.push(guideId);
-      removeWhere(order, (x) => x === c);
-      order.push(c);
-    }
+    for (const c of tied) c.route!.tied.push(guideId);
     this.relayout(guideId);
     events.emit('cable:tied', { guideId, cableIds: tied.map((c) => c.id) });
     return tied;
   }
 
-  private tieOrderOf(guideId: string): Cable[] {
-    let order = this.tieOrder.get(guideId);
-    if (!order) this.tieOrder.set(guideId, (order = []));
-    return order;
-  }
-
   /**
    * 그 가이드의 차선 (지나는 경로 선마다 오프셋). 가이드 하나에 격자 하나: 간격은 그 가이드에서 가장 굵은 선 기준.
-   * 묶인 선이 앞 차선(묶은 순서), 안 묶인 선이 그 뒤(world.cables 순서). tight = 안 묶인 선의 tight (묶인 선은 늘 1)
+   * 묶인 선이 앞 차선, 안 묶인 선이 그 뒤. 각 무리 안은 laneOrder — 선이 드나드는 쪽과 따라가는 길이로 서로 안 가로지르게.
+   * tight = 안 묶인 선의 tight (묶인 선은 늘 1)
    */
   laneMap(guideId: string, tight = 0): Map<Cable, LaneOffset> {
-    const passing = this.world.cables.filter((c) => c.route?.guides.includes(guideId));
-    const order = this.tieOrder.get(guideId) ?? [];
-    const rank = (c: Cable) => {
-      const i = order.indexOf(c);
-      return i < 0 ? Infinity : i;
+    const byId = new Map(this.guides().map((g) => [g.id, g]));
+    const passing = this.world.cables.filter(
+      (c) => c.route?.guides.includes(guideId) && c.ends[0] && c.ends[1] && c.route.guides.every((id) => byId.has(id)),
+    );
+    const sorted = (cs: Cable[]): Cable[] => {
+      const keys = cs.map((c) => {
+        const seq = c.route!.guides.map((id) => byId.get(id)!);
+        return laneKey(routeLayout(c.ends[0]!, c.ends[1]!, seq), c.route!.guides.indexOf(guideId), byId.get(guideId)!);
+      });
+      return laneOrder(keys).map((i) => cs[i]!);
     };
-    // 묶은 순서를 모르는 선(순서 목록 밖)은 world.cables 순서로 뒤에 (sort는 안정 정렬)
-    const tied = passing.filter((c) => c.route!.tied.includes(guideId)).sort((p, q) => rank(p) - rank(q));
-    const untied = passing.filter((c) => !c.route!.tied.includes(guideId));
+    const tied = sorted(passing.filter((c) => c.route!.tied.includes(guideId)));
+    const untied = sorted(passing.filter((c) => !c.route!.tied.includes(guideId)));
     const maxRadius = Math.max(0, ...passing.map((c) => c.rope.cfg.radius));
     const offsets = laneOffsets(passing.length, tied.length, tight, maxRadius);
     return new Map([...tied, ...untied].map((c, k) => [c, offsets[k]!]));
@@ -351,9 +339,10 @@ export class Room {
       if (seq.some((g) => !g)) continue;
       const tights = route.guides.map((id) => (route.tied.includes(id) ? 1 : tight?.get(id) ?? 0));
       const lanes: LaneOffset[] = route.guides.map((id) => lanesOf(id).get(c)!);
-      const layout = routeLayout(a, b, seq as Guide[], lanes);
-      c.rope.setPath(layout.pts);
-      wobble(c, layout, tights);
+      const layout = smoothLayout(routeLayout(a, b, seq as Guide[], lanes));
+      const shape = wobble(layout, tights);
+      c.shape = Float32Array.from(shape.flat());
+      c.rope.setPath(shape);
     }
   }
 
@@ -460,29 +449,26 @@ export class Room {
 }
 
 /**
- * 묶이지 않은 가이드 구간 마디를 z로 사인 모양 흔듦 (진폭 WOBBLE × (1 - tight)).
- * layout = routeLayout 꺾은선과 가이드 구간 인덱스 — 마디는 setPath가 호 길이로 고르게 깔아 둠
+ * 경로 모양을 SHAPE_STEP 간격으로 촘촘히 깔고, 묶이지 않은 가이드 구간은 z로 사인 모양 흔듦 (진폭 WOBBLE × (1 - tight)).
+ * layout = 둥글게 한 routeLayout 꺾은선과 가이드 구간 인덱스
  */
-function wobble(c: Cable, { pts, spans }: RouteLayout, tights: readonly number[]): void {
-  const { rope } = c;
+function wobble({ pts, spans }: RouteLayout, tights: readonly number[]): Vec3[] {
   const cum = [0];
   for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + polylineLength([pts[i - 1], pts[i]]));
   const total = cum[cum.length - 1];
-  let moved = false;
+  const m = Math.max(2, Math.ceil(total / SHAPE_STEP) + 1);
+  const out = resample(pts, m);
   tights.forEach((t, k) => {
     const amp = WOBBLE * (1 - t);
     if (amp <= 0) return;
     const s0 = cum[spans[k]![0]], s1 = cum[spans[k]![1]];
-    for (let i = 0; i < rope.n; i++) {
-      const d = (total * i) / (rope.n - 1);
+    for (let i = 0; i < m; i++) {
+      const d = (total * i) / (m - 1);
       if (d <= s0 || d >= s1) continue;
-      rope.pos[i * 3 + 2] += amp * Math.sin((2 * Math.PI * (d - s0)) / WOBBLE_PERIOD);
-      moved = true;
+      out[i]![2] += amp * Math.sin((2 * Math.PI * (d - s0)) / WOBBLE_PERIOD);
     }
   });
-  if (!moved) return;
-  rope.prev.set(rope.pos);
-  rope.version++;
+  return out;
 }
 
 function removeWhere<T>(arr: T[], drop: (x: T) => boolean): void {

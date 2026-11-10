@@ -77,7 +77,8 @@ export class CableMesh {
     this.synced = rope.version;
 
     const n = rope.n;
-    this.buildCurve(rope.pos, n);
+    if (this.cable.shape) this.fromShape(this.cable.shape);
+    else this.buildCurve(rope.pos, n);
     const p = this.curve;
     const m = this.rings;
     const r = CABLE_RADIUS[this.cable.kind];
@@ -112,8 +113,8 @@ export class CableMesh {
     geo.attributes.position.needsUpdate = true;
     geo.attributes.normal.needsUpdate = true;
 
-    this.placePlug(this.plugs[0], 0, 1);
-    this.placePlug(this.plugs[1], n - 1, n - 2);
+    this.placePlug(this.plugs[0], 0, SUBDIV);
+    this.placePlug(this.plugs[1], m - 1, m - 1 - SUBDIV);
   }
 
   /** 링마다 기본색 */
@@ -144,9 +145,32 @@ export class CableMesh {
     out[o] = p[e]; out[o + 1] = p[e + 1]; out[o + 2] = p[e + 2];
   }
 
-  /** 커넥터 앞 끝을 끝 노드에 두고, 케이블 반대쪽(바깥)으로 향하게 */
+  /** 경로 선: 촘촘한 모양을 호 길이로 고르게 링 수만큼 (Catmull-Rom 없이 — 모양이 이미 둥글게 꺾여 있음) */
+  private fromShape(sh: Float32Array): void {
+    const out = this.curve;
+    const k = sh.length / 3;
+    const m = this.rings;
+    let total = 0;
+    for (let i = 1; i < k; i++) total += Math.hypot(sh[i * 3] - sh[i * 3 - 3], sh[i * 3 + 1] - sh[i * 3 - 2], sh[i * 3 + 2] - sh[i * 3 - 1]);
+    let seg = 0, at = 0; // at = seg 시작까지 호 길이
+    let len = k > 1 ? Math.hypot(sh[3] - sh[0], sh[4] - sh[1], sh[5] - sh[2]) : 0;
+    for (let i = 0; i < m; i++) {
+      const d = m === 1 ? 0 : (total * i) / (m - 1);
+      while (seg < k - 2 && at + len < d) {
+        at += len;
+        seg++;
+        const o = seg * 3;
+        len = Math.hypot(sh[o + 3] - sh[o], sh[o + 4] - sh[o + 1], sh[o + 5] - sh[o + 2]);
+      }
+      const u = len > 1e-9 ? Math.min(1, (d - at) / len) : 0;
+      const a = seg * 3, b = Math.min(seg + 1, k - 1) * 3;
+      for (let c = 0; c < 3; c++) out[i * 3 + c] = sh[a + c] + (sh[b + c] - sh[a + c]) * u;
+    }
+  }
+
+  /** 커넥터 앞 끝을 곡선 끝 링에 두고, 케이블 반대쪽(바깥)으로 향하게 */
   private placePlug(mesh: THREE.Mesh, end: number, inner: number): void {
-    const p = this.cable.rope.pos;
+    const p = this.curve;
     const e = end * 3, q = inner * 3;
     plugDir.set(p[q] - p[e], p[q + 1] - p[e + 1], p[q + 2] - p[e + 2]).normalize();
     mesh.position.set(p[e], p[e + 1], p[e + 2]);
