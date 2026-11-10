@@ -83,3 +83,13 @@ export function reachableCells(racks: readonly RackPlace[], cableLen = LONG_LAN_
 export function canPlaceRack(racks: readonly RackPlace[], cell: Cell): boolean {
   return reachableCells(racks).some((c) => c[0] === cell[0] && c[1] === cell[1]);
 }
+
+/** 작업 시점 거리 m: 앞뒤 칸이 비었으면 넉넉히, 그 칸에 랙이 있으면 두 랙 사이 통로 안 */
+export const AISLE_OPEN = 2.7;
+export const AISLE_NARROW = 1.3;
+
+/** 그 칸 랙의 앞(z+1)·뒤(z−1) 통로에서 카메라를 둘 거리 (모든 랙은 +z를 봄) */
+export function aisleAt(racks: readonly RackPlace[], cell: Cell): { front: number; back: number } {
+  const taken = (z: number) => racks.some((r) => r.cell[0] === cell[0] && r.cell[1] === z);
+  return { front: taken(cell[1] + 1) ? AISLE_NARROW : AISLE_OPEN, back: taken(cell[1] - 1) ? AISLE_NARROW : AISLE_OPEN };
+}

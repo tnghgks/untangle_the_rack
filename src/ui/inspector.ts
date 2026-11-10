@@ -143,8 +143,9 @@ export function createInspector({ root, canvas, camera, controls, room, onRemove
       card.innerHTML = html;
       lastHtml = html;
     }
-    // 카메라 쪽 면의 오른쪽 모서리 옆에 붙임
-    const front = camera.position.z >= 0;
+    // 카메라 쪽 면의 오른쪽 모서리 옆에 붙임 (몸체 위치는 랙 원점 기준이라 원점을 더함)
+    const [ox, oy, oz] = device.origin;
+    const front = camera.position.z >= oz;
     if (device.u === null) {
       const x = device.body.position.x;
       anchor.set(x + Math.sign(x) * PDU_LAYOUT.w, device.body.position.y, PDU_LAYOUT.z);
@@ -152,6 +153,9 @@ export function createInspector({ root, canvas, camera, controls, room, onRemove
       const right = front ? DEVICE_WIDTH / 2 : -DEVICE_WIDTH / 2;
       anchor.set(right, device.body.position.y, front ? DEVICE_DEPTH / 2 : -DEVICE_DEPTH / 2);
     }
+    anchor.x += ox;
+    anchor.y += oy;
+    anchor.z += oz;
     anchor.project(camera);
     const rect = canvas.getBoundingClientRect();
     const sx = ((anchor.x + 1) / 2) * rect.width;

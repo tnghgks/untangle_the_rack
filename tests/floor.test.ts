@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { RACK_HEIGHT } from '../src/data/units';
-import { cellOrigin, reachableCells, trayGuide, worstUplinkLength } from '../src/rack/floor';
+import { aisleAt, cellOrigin, reachableCells, trayGuide, worstUplinkLength } from '../src/rack/floor';
 
 const has = (cells: readonly (readonly [number, number])[], c: readonly [number, number]) => cells.some((x) => x[0] === c[0] && x[1] === c[1]);
 
@@ -36,5 +36,13 @@ describe('바닥 칸', () => {
   it('체인: 새 랙 옆 칸도 초록', () => {
     const g = reachableCells([{ id: 'rack-1', cell: [0, 0] }, { id: 'rack-2', cell: [4, 0] }]);
     expect(has(g, [6, 0])).toBe(worstUplinkLength([4, 0], [6, 0]) * 1.02 <= 10);
+  });
+
+  it('통로: 앞(z+1)·뒤(z−1) 칸에 랙이 있으면 좁게, 옆 칸은 상관없음', () => {
+    const racks = [{ id: 'rack-1', cell: [0, 0] as const }];
+    expect(aisleAt(racks, [0, 0])).toEqual({ front: 2.7, back: 2.7 });
+    const more = [...racks, { id: 'rack-2', cell: [0, 1] as const }, { id: 'rack-3', cell: [1, -1] as const }];
+    expect(aisleAt(more, [0, 0])).toEqual({ front: 1.3, back: 2.7 });
+    expect(aisleAt(more, [0, 1])).toEqual({ front: 2.7, back: 1.3 });
   });
 });

@@ -4,11 +4,11 @@ import type { Cable, CableEnd, Route } from '../cable/cable';
 import { events } from '../core/events';
 import { DEVICES, type DeviceDefId } from '../data/catalog';
 import { RACK, RACK_HEIGHT, U } from '../data/units';
-import type { Room } from '../view/room';
+import type { RackSite, Room } from '../view/room';
 import { DEVICE_DEPTH, DEVICE_WIDTH, deviceCenterY, deviceHeight } from './device';
 import { uFromCenterY } from './rack';
 
-// 손에 든 장비: 커서가 가리키는 랙 면(카메라 쪽 앞/뒷면) 높이에 반투명 미리보기를 띄우고
+// 손에 든 장비: 커서가 가리키는 랙 면(랙마다 카메라 쪽 앞/뒷면, 그중 카메라에서 가장 가까운 랙) 높이에 반투명 미리보기를 띄우고
 // 좌클릭으로 끼운다. 들고 있는 동안 좌클릭은 카메라·케이블로 가지 않는다 (우클릭 팬·휠 줌은 그대로).
 // 랙에서 뺀 장비(moving)를 들고 있다가 끼우지 않고 놓으면(Esc·다른 장비 들기) 원래 자리로 돌아간다.
 
@@ -16,14 +16,17 @@ const OK_COLOR = 0x3cff7a;
 const BAD_COLOR = 0xff4a3c;
 /** 랙 면에서 이만큼 벗어나면 미리보기를 숨김 */
 const REACH_X = RACK.width;
+const PLANE_NORMAL = new THREE.Vector3(0, 0, 1);
 
 export interface PlacementDeps {
   canvas: HTMLCanvasElement;
   camera: THREE.PerspectiveCamera;
+  /** 미리보기 상자를 둘 장면 (월드 좌표) */
+  scene: THREE.Scene;
   controls: OrbitControls;
   room: Room;
-  /** 빈 칸을 클릭함 → 새 장비는 돈을 내고, 뺀 장비(moving)는 그냥 끼움 */
-  install(defId: DeviceDefId, u: number, moving: MovingDevice | null): void;
+  /** 그 랙의 빈 칸을 클릭함 → 새 장비는 돈을 내고, 뺀 장비(moving)는 그냥 끼움 */
+  install(defId: DeviceDefId, rackId: string, u: number, moving: MovingDevice | null): void;
   /** 뺀 장비를 끼우지 않고 놓음 → 원래 자리로 */
   putBack(defId: DeviceDefId, moving: MovingDevice): void;
 }
@@ -31,6 +34,8 @@ export interface PlacementDeps {
 /** 랙에서 빼서 손에 든 장비 (같은 id로 다시 끼움) */
 export interface MovingDevice {
   id: string;
+  /** 뺀 랙 (원래 자리로 돌릴 때·저장) */
+  rack: string;
   u: number;
   on: boolean;
   /** 끌어 옮길 때: 뺄 때 꽂혀 있던 케이블과 그 경로 — 끼운 뒤 닿으면 같은 포트에 다시 꽂고 경로도 되살림 */
@@ -50,7 +55,7 @@ export interface Placement {
   refresh(): void;
 }
 
-export function createPlacement({ canvas, camera, controls, room, install, putBack }: PlacementDeps): Placement {
+export function createPlacement({ canvas, camera, scene, controls, room, install, putBack }: PlacementDeps): Placement {
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   const plane = new THREE.Plane();
@@ -59,11 +64,11 @@ export function createPlacement({ canvas, camera, controls, room, install, putBa
   const ghost = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), mat);
   ghost.visible = false;
   ghost.renderOrder = 10;
-  room.racks[0].group.add(ghost); // 임시: 첫 랙만 (여러 랙 입력은 이후 태스크)
+  scene.add(ghost);
 
   let held: DeviceDefId | null = null;
   let moving: MovingDevice | null = null;
-  let target: { u: number; ok: boolean } | null = null;
+  let target: { rack: string; u: number; ok: boolean } | null = null;
   /** 버튼을 누른 채 끌고 있음 (떼면 끼움) */
   let dragging = false;
   let lastX = 0;
@@ -77,16 +82,27 @@ export function createPlacement({ canvas, camera, controls, room, install, putBa
     const rect = canvas.getBoundingClientRect();
     ndc.set(((lastX - rect.left) / rect.width) * 2 - 1, -((lastY - rect.top) / rect.height) * 2 + 1);
     raycaster.setFromCamera(ndc, camera);
-    // 카메라가 있는 쪽 장비 면
-    const faceZ = camera.position.z >= 0 ? DEVICE_DEPTH / 2 : -DEVICE_DEPTH / 2;
-    plane.set(new THREE.Vector3(0, 0, 1), -faceZ);
-    if (!raycaster.ray.intersectPlane(plane, hit)) return;
-    if (Math.abs(hit.x) > REACH_X || hit.y < 0 || hit.y > RACK_HEIGHT + 0.2) return;
-    const u = uFromCenterY(hit.y, def.sizeU, RACK.baseHeight, U, room.racks[0].slots.units);
-    const ok = room.racks[0].slots.canPlace(u, def.sizeU);
-    target = { u, ok };
+    // 랙마다 카메라가 있는 쪽 장비 면과 만나는 점 → 그 면 안에 든 것 중 카메라에서 가장 가까운 랙.
+    // 나란한 랙(같은 z)은 면이 같아 거리가 같으므로 가로로 더 가까운 랙
+    let best: { rack: RackSite; y: number; dist: number; dx: number } | null = null;
+    for (const rack of room.racks) {
+      const [ox, oy, oz] = rack.origin;
+      const faceZ = camera.position.z >= oz ? oz + DEVICE_DEPTH / 2 : oz - DEVICE_DEPTH / 2;
+      plane.set(PLANE_NORMAL, -faceZ);
+      if (!raycaster.ray.intersectPlane(plane, hit)) continue;
+      const y = hit.y - oy;
+      const dx = Math.abs(hit.x - ox);
+      if (dx > REACH_X || y < 0 || y > RACK_HEIGHT + 0.2) continue;
+      const dist = hit.distanceTo(camera.position);
+      if (!best || dist < best.dist - 1e-4 || (dist < best.dist + 1e-4 && dx < best.dx)) best = { rack, y, dist, dx };
+    }
+    if (!best) return;
+    const { rack, y } = best;
+    const u = uFromCenterY(y, def.sizeU, RACK.baseHeight, U, rack.slots.units);
+    const ok = rack.slots.canPlace(u, def.sizeU);
+    target = { rack: rack.id, u, ok };
     ghost.scale.set(DEVICE_WIDTH + 0.004, deviceHeight(def.sizeU) + 0.004, DEVICE_DEPTH + 0.004);
-    ghost.position.set(0, deviceCenterY(u, def.sizeU), 0);
+    ghost.position.set(rack.origin[0], rack.origin[1] + deviceCenterY(u, def.sizeU), rack.origin[2]);
     mat.color.setHex(ok ? OK_COLOR : BAD_COLOR);
     ghost.visible = true;
   };
@@ -111,10 +127,10 @@ export function createPlacement({ canvas, camera, controls, room, install, putBa
     // 빈손 먼저 → 설치 이벤트가 마지막에 와서 설치 안내가 남는다
     const defId = held;
     const m = moving;
-    const { u } = target;
+    const { rack, u } = target;
     moving = null;
     setHeld(null);
-    install(defId, u, m);
+    install(defId, rack, u, m);
     controls.enabled = true;
     return true;
   };
