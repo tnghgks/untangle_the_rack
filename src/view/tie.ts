@@ -5,7 +5,7 @@ import type { Guide } from '../cable/guide';
 import { deviceRings } from '../cable/manager';
 import { routePath } from '../cable/route';
 import { events } from '../core/events';
-import { playTie } from '../ui/sfx';
+import { playTie, primeAudio } from '../ui/sfx';
 import { pickCable } from './pick';
 import type { Room } from './room';
 
@@ -272,6 +272,7 @@ export function createTieTool({ canvas, camera, scene, room, guides, active, onT
       if (anims.has(g.id)) return;
       const pending = untiedOn(g.id);
       if (pending.length === 0) return;
+      primeAudio(); // 띠가 감길 때 소리가 나도록 클릭 안에서 소리를 깨워 둠
       anims.set(g.id, { guideId: g.id, t: 0, pending, hadStraps: strapSpots(room, g.id).length > 0, strapped: false });
     },
     { capture: true },

@@ -144,7 +144,8 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
     setModel(m) {
       money.textContent = `💰 ${formatMoney(m.money)}`;
       rate.textContent = formatRate(m.incomePerSec);
-      power.textContent = `⚡ ${m.powerUsed.toLocaleString('ko-KR')} / ${m.powerCap.toLocaleString('ko-KR')}W`;
+      // 정리 보상으로 소수가 생기므로 정수로 반올림해 보여 줌
+      power.textContent = `⚡ ${Math.round(m.powerUsed).toLocaleString('ko-KR')} / ${m.powerCap.toLocaleString('ko-KR')}W`;
       warn.hidden = m.pduWarn === null;
       warn.textContent = m.pduWarn ?? '';
     },

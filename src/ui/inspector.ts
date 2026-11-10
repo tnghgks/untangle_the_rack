@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import type { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { events } from '../core/events';
-import type { PowerStatus } from '../game/power';
+import { effectiveWatts, type PowerStatus } from '../game/power';
 import { DEVICE_DEPTH, DEVICE_WIDTH, PDU_LAYOUT, type Device } from '../rack/device';
 import { pickDevice } from '../view/pick';
 import type { Room } from '../view/room';
@@ -116,11 +116,11 @@ export function createInspector({ root, canvas, camera, controls, room, onRemove
     };
     const lines: string[] = [];
     if (p.role === 'pdu') {
-      lines.push(`부하 ${(p.tripped ? p.demand : p.load).toLocaleString('ko-KR')} / ${p.capacity.toLocaleString('ko-KR')}W`);
+      lines.push(`부하 ${Math.round(p.tripped ? p.demand : p.load).toLocaleString('ko-KR')} / ${p.capacity.toLocaleString('ko-KR')}W`);
       lines.push(`콘센트 ${used('power')} 사용`);
     } else {
       if (d.def.incomePerSec > 0) lines.push(`수익 ${formatRate(d.def.incomePerSec)}${p.status === 'running' ? '' : ' (멈춤)'}`);
-      lines.push(`전력 ${d.def.watts}W`);
+      lines.push(`전력 ${Math.round(effectiveWatts(p))}W`); // 정리 보상이 반영된 실제 소비
       const lan = used('lan');
       lines.push(`포트 ${lan ? `랜 ${lan} · ` : ''}전원 ${used('power')}`);
     }

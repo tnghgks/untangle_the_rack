@@ -1,5 +1,6 @@
 // 효과음: WebAudio로 그 자리에서 만든다 (소리 파일 없음).
-// AudioContext는 첫 재생 때 만든다 — 브라우저는 사용자 입력(클릭) 안에서만 소리를 허락한다.
+// 브라우저는 사용자 입력(클릭) 안에서만 소리를 허락한다 → primeAudio를 클릭 처리 안에서 불러 AudioContext를
+// 만들고 깨워 둔다. 실제 소리(playTie)는 그 뒤 연출 중(클릭 밖)에 난다.
 
 let ctx: AudioContext | null = null;
 let noise: AudioBuffer | null = null;
@@ -23,6 +24,12 @@ function audio(): AudioContext | null {
   const ch = noise.getChannelData(0);
   for (let i = 0; i < n; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / n) ** 2;
   return ctx;
+}
+
+/** 클릭(사용자 입력) 처리 안에서 부름: AudioContext를 만들거나 멈춰 있으면 다시 깨움 */
+export function primeAudio(): void {
+  const ac = audio();
+  if (ac?.state === 'suspended') void ac.resume();
 }
 
 /** 벨크로 묶는 "탁": 짧은 노이즈 버스트 + 낮은 클릭 (전체 150ms 안쪽) */
