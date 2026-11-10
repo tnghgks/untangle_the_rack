@@ -134,7 +134,7 @@ export function createGuideTool({ canvas, camera, scene, room, drag, active }: G
     }
     flash = null;
     const [a, b] = cable.ends;
-    const seq = a && b ? findRoute(a, b, room.guides(), guide.id, cable.rope.length) : null;
+    const seq = a && b ? findRoute(a, b, room.guides(), guide.id) : null;
     light(guide.id, seq ? OK_GLOW : BAD_GLOW);
     if (!seq || !a || !b) return hidePreview();
     const key = `${cable.id}|${guide.id}`;

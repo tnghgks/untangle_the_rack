@@ -1,91 +1,84 @@
 import * as THREE from 'three';
 import { describe, expect, it } from 'vitest';
+import type { Port } from '../src/cable/cable';
 import { guideOf } from '../src/cable/guide';
-import { FREE_WEIGHT, findRoute, laneOffset, laneOffsets, pathLength, REACH_SLACK, routePath, routeScore } from '../src/cable/route';
+import { SIDE_RING_X } from '../src/cable/manager';
+import { findRoute, laneOffset, laneOffsets, NEAR, routePath } from '../src/cable/route';
 import { createStartRoom, type Room } from '../src/view/room';
 
 const newRoom = (): Room => createStartRoom(new THREE.Scene(), new THREE.Group());
 
-/** 시작 방의 케이블 3가닥 끝 포트 */
+/** 시작 방의 케이블 3가닥 끝 포트 (0·1 = PDU → 스위치·서버 전원, 2 = 스위치 ↔ 서버 랜) */
 const cableEnds = (room: Room) => room.world.cables.map((c) => ({ a: c.ends[0]!, b: c.ends[1]! }));
+const lanEnds = (room: Room) => cableEnds(room)[2]!;
+const ids = (gs: { id: string }[] | null) => gs?.map((g) => g.id);
+const axisAligned = (p: readonly number[], q: readonly number[]) => [0, 1, 2].filter((k) => Math.abs(p[k]! - q[k]!) > 1e-9).length <= 1;
 
 describe('가이드와 경로 찾기', () => {
-  it('시작 방 3가닥 모두 U2·U5·U10·U15 매니저로 경로가 나옴', () => {
-    for (const u of [2, 5, 10, 15]) {
-      const room = newRoom();
-      const g = guideOf(room.install('cable-manager', u)!)!;
-      const ends = cableEnds(room);
-      expect(ends).toHaveLength(3);
-      for (const { a, b } of ends) expect(findRoute(a, b, [g], g.id, 2.0)).toEqual([g]);
-    }
-  });
-
-  it('U40 매니저도 경로가 나옴 (2m 넘는 경로라도)', () => {
+  it('두 끝이 다 가까운 가로 매니저는 그것 하나, 직각으로만 꺾임', () => {
     const room = newRoom();
-    const g = guideOf(room.install('cable-manager', 40)!)!;
-    for (const { a, b } of cableEnds(room)) expect(findRoute(a, b, [g], g.id, 2.0)).toEqual([g]);
-    // 적어도 한 가닥은 2m를 넘음 → 길이를 무시하는 대체 경로로 나온 것
-    const over = cableEnds(room).filter(({ a, b }) => pathLength(routePath(a, b, [g])) * REACH_SLACK > 2);
-    expect(over.length).toBeGreaterThan(0);
+    const h = guideOf(room.install('cable-manager', 2)!)!; // 스위치 U1 · 서버 U3 사이
+    const { a, b } = lanEnds(room);
+    expect(Math.abs(a.pos[1] - h.a[1])).toBeLessThanOrEqual(NEAR);
+    expect(findRoute(a, b, [h], h.id)).toEqual([h]);
+    const pts = routePath(a, b, [h], [{ d: [0.007, -0.007] }]);
+    for (let i = 2; i < pts.length - 1; i++) expect(axisAligned(pts[i - 1]!, pts[i]!), `seg ${i}`).toBe(true);
   });
 
   it('가이드 목록에 놓은 가이드가 없으면 null', () => {
     const room = newRoom();
     const g = guideOf(room.install('cable-manager', 5)!)!;
     const { a, b } = cableEnds(room)[0]!;
-    expect(findRoute(a, b, [g], 'nope', 2.0)).toBeNull();
+    expect(findRoute(a, b, [g], 'nope')).toBeNull();
   });
 
-  it('2m 안 경로가 있으면 그쪽을 고름', () => {
+  it('먼 가로 매니저 + 세로 매니저: 가로 → 세로로 이어지고, 먼 끝 가까이 가로 매니저도 끼움', () => {
     const room = newRoom();
-    const near = guideOf(room.install('cable-manager', 5)!)!;
-    const far = guideOf(room.install('cable-manager', 40)!)!;
-    for (const { a, b } of cableEnds(room)) {
-      const r = findRoute(a, b, [near, far], near.id, 2.0)!;
-      expect(r.map((g) => g.id)).not.toContain(far.id);
-    }
-  });
-
-  it('경로는 포트에서 시작해 포트에서 끝남', () => {
-    const room = newRoom();
-    const g = guideOf(room.install('cable-manager', 5)!)!;
-    for (const { a, b } of cableEnds(room)) {
-      const pts = routePath(a, b, [g]);
-      expect(pts[0]).toEqual(a.pos);
-      expect(pts[pts.length - 1]).toEqual(b.pos);
-      expect(pathLength(pts) * 1.02).toBeLessThanOrEqual(2);
-    }
-  });
-
-  it('경로는 직각으로만 꺾임 (대각선 구간 없음, 차선이 있어도)', () => {
-    const room = newRoom();
-    const h = guideOf(room.install('cable-manager', 10)!)!;
+    const far = guideOf(room.install('cable-manager', 20)!)!;
+    const near = guideOf(room.install('cable-manager', 2)!)!;
     const v = guideOf(room.addSide('cable-manager-v')!)!;
-    const lane = { d: [0.007, -0.007] as [number, number] };
-    for (const { a, b } of cableEnds(room)) {
-      for (const seq of [[h], [v], [h, v], [v, h]]) {
-        const pts = routePath(a, b, seq, seq.map(() => lane));
-        // 포트 → 스텁 구간(첫·끝)은 포트 방향 그대로라 빼고 검사
-        for (let i = 2; i < pts.length - 1; i++) {
-          const p = pts[i - 1]!, q = pts[i]!;
-          const moved = [0, 1, 2].filter((k) => Math.abs(p[k]! - q[k]!) > 1e-9);
-          expect(moved.length, `seq=${seq.map((g) => g.axis)} seg ${i}`).toBeLessThanOrEqual(1);
-        }
-      }
-    }
+    const top = room.install('server-entry', 21)!; // far 매니저 바로 위 서버
+    const sw = room.devices.find((d) => d.def.id === 'switch-8')!;
+    const a = top.ports.find((p) => p.kind === 'lan')! as Port;
+    const b = sw.ports.find((p) => p.kind === 'lan' && !p.plugged)! as Port;
+    expect(ids(findRoute(a, b, [far, near, v], far.id))).toEqual([far.id, v.id, near.id]);
+    // 세로 매니저에 놓아도 같은 길
+    expect(ids(findRoute(a, b, [far, near, v], v.id))).toEqual([far.id, v.id, near.id]);
+    // 놓은 가이드가 b 쪽이면 순서도 a → b
+    expect(ids(findRoute(a, b, [far, near, v], near.id))).toEqual([far.id, v.id, near.id]);
   });
 
-  it('세로 매니저가 있어도 가로 단독보다 점수가 나쁘지 않은 경로를 고름', () => {
+  it('세로 매니저 없이 먼 가로 매니저: 그것 하나, 먼 끝은 랙 옆으로 늘어뜨림 (포트 x에서 곧장 수직으로 안 감)', () => {
     const room = newRoom();
     const h = guideOf(room.install('cable-manager', 20)!)!;
+    const top = room.install('server-entry', 21)!;
+    const sw = room.devices.find((d) => d.def.id === 'switch-8')!;
+    const a = top.ports.find((p) => p.kind === 'lan')! as Port;
+    const b = sw.ports.find((p) => p.kind === 'lan' && !p.plugged)! as Port;
+    expect(findRoute(a, b, [h], h.id)).toEqual([h]);
+    const pts = routePath(a, b, [h]);
+    expect(pts.some((p) => Math.abs(p[0]) >= SIDE_RING_X - 1e-9)).toBe(true);
+    // 가로 매니저 높이에서 b 높이까지 내려가는 구간은 다 랙 옆(|x| ≥ 매니저 끝)에서
+    const hy = h.a[1], by = b.pos[1] + 0.05;
+    for (const p of pts) if (p[1] < hy - 0.01 && p[1] > by) expect(Math.abs(p[0])).toBeGreaterThan(Math.abs(h.b[0]));
+  });
+
+  it('처진 선은 바닥 밑으로 안 내려감', () => {
+    const room = newRoom();
     const v = guideOf(room.addSide('cable-manager-v')!)!;
-    expect(v.axis).toBe(1);
-    expect(FREE_WEIGHT).toBe(3);
     for (const { a, b } of cableEnds(room)) {
-      const r = findRoute(a, b, [h, v], h.id, 2.0)!;
-      expect(r.map((g) => g.id)).toContain(h.id);
-      expect(routeScore(a, b, r)).toBeLessThanOrEqual(routeScore(a, b, [h]) + 1e-9);
+      for (const p of routePath(a, b, [v])) expect(p[1]).toBeGreaterThan(0);
     }
+  });
+
+  it('세로 매니저에만 놓으면 받침 없는 가로 구간이 아래로 처짐', () => {
+    const room = newRoom();
+    const v = guideOf(room.addSide('cable-manager-v')!)!;
+    const { a, b } = lanEnds(room);
+    expect(findRoute(a, b, [v], v.id)).toEqual([v]);
+    const pts = routePath(a, b, [v]);
+    const low = Math.min(a.pos[1], b.pos[1]);
+    expect(Math.min(...pts.map((p) => p[1]))).toBeLessThan(low - 0.03);
   });
 
   it('laneOffset 차선끼리 안 겹침', () => {

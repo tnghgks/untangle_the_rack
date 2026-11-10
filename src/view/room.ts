@@ -252,7 +252,7 @@ export class Room {
   routeCable(cable: Cable, guideId: string): boolean {
     const [a, b] = cable.ends;
     if (!a || !b) return false;
-    const seq = findRoute(a, b, this.guides(), guideId, cable.rope.length);
+    const seq = findRoute(a, b, this.guides(), guideId);
     if (!seq) return false;
     this.setRoute(cable, seq.map((g) => g.id), []);
     events.emit('cable:routed', { cableId: cable.id });
