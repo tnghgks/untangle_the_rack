@@ -179,7 +179,9 @@ export class Room {
       const avg = plugged.length ? plugged.reduce((s, c) => s + tidyDegree(c.route), 0) / plugged.length : 0;
       d.power.saving = TIDY_POWER_CUT * avg;
     }
-    const wasTripped = new Set(this.devices.filter((d) => d.power.tripped));
+    // 임시: 모든 스위치가 인터넷에 닿음 (첫 랙 기준 판정은 이후 태스크)
+    for (const d of this.devices) if (d.power.role === 'switch') d.power.uplink = true;
+    const wasTripped =new Set(this.devices.filter((d) => d.power.tripped));
     this.summary = updatePower(
       this.devices.map((d) => d.power),
       links,

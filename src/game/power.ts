@@ -1,5 +1,5 @@
 // 가동 판정 (계획서 4.2). Three.js에 의존하지 않는다 (헤드리스 테스트용).
-// running = on && 부팅 끝 && 전원 포트 ↔ 차단 안 된 PDU 콘센트 && (서버면) 랜 포트 ↔ running 스위치.
+// running = on && 부팅 끝 && 전원 포트 ↔ 차단 안 된 PDU 콘센트 && (스위치면) 업링크 스위치에서 랜으로 이어짐 && (서버면) 랜 포트 ↔ running 스위치.
 // 부팅은 "켜져 있고 전기가 들어온" 순간부터 BOOT_MS. 전기가 끊기면 처음부터 다시.
 // PDU 부하(켜져 전기를 먹는 장비 합)가 용량을 넘으면 차단기가 내려가 그 PDU에 꽂힌 장비 전부 전기 없음.
 // 장비 전원 버튼 상태는 그대로 → 리셋(resetBreaker)하면 다시 부팅. 부하를 안 줄이고 리셋하면 또 내려감.
@@ -39,6 +39,8 @@ export interface PowerDevice {
   status: PowerStatus;
   /** 배선 완료: 전원 포트 ↔ 차단 안 된 PDU, (서버면) 랜 포트 ↔ 스위치. 꺼져 있어도 셈 → "켜면 돈다" 표시용 */
   ready: boolean;
+  /** 스위치: 인터넷에 직접 닿아 있음 (첫 랙 스위치). Room이 매 판정 전에 채움 */
+  uplink: boolean;
 }
 
 export interface PowerSummary {
@@ -114,7 +116,23 @@ function evaluate(devices: readonly PowerDevice[], links: ReadonlyMap<string, st
     }
   }
 
-  // 2) 서버는 running 스위치에 랜으로 이어져야 가동 (스위치끼리 연결은 MVP 밖)
+  // 1.5) 인터넷: uplink 스위치에서 랜 링크로 이어진 running 스위치만 온라인. 못 닿은 running 스위치는 nolink
+  const online = new Set<PowerDevice>();
+  const queue = devices.filter((d) => d.role === 'switch' && d.status === 'running' && d.uplink);
+  for (const d of queue) online.add(d);
+  for (let i = 0; i < queue.length; i++) {
+    for (const p of queue[i].ports) {
+      if (p.kind !== 'lan') continue;
+      const peer = peerDevice(p.id);
+      if (peer?.role === 'switch' && peer.status === 'running' && !online.has(peer)) {
+        online.add(peer);
+        queue.push(peer);
+      }
+    }
+  }
+  for (const d of devices) if (d.role === 'switch' && d.status === 'running' && !online.has(d)) d.status = 'nolink';
+
+  // 2) 서버는 (온라인) running 스위치에 랜으로 이어져야 가동. nolink 스위치에 꽂힌 서버도 nolink
   for (const d of devices) {
     if (d.role !== 'server' || d.status !== 'running') continue;
     const linked = d.ports.some((p) => p.kind === 'lan' && peerDevice(p.id)?.role === 'switch' && peerDevice(p.id)!.status === 'running');

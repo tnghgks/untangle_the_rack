@@ -106,7 +106,8 @@ export function createInspector({ root, canvas, camera, controls, room, onRemove
   const render = (d: Device): string => {
     if (d.def.rings) return renderManager(d);
     const p = d.power;
-    const [label, baseHelp] = STATUS_TEXT[p.status];
+    const [label, statusHelp] = STATUS_TEXT[p.status];
+    const baseHelp = p.role === 'switch' && p.status === 'nolink' ? '인터넷에 닿은 랙의 스위치에 랜선으로 이으세요 (랙 사이는 랜선 10m)' : statusHelp;
     // 꺼져 있을 때: 배선이 끝났는지에 따라 (뒷면 파란 등 = 배선 완료)
     const help = p.status === 'off' ? (p.ready ? '배선 완료 · 앞면 전원 버튼을 누르면 가동' : '뒷면 전원선·랜선을 연결하고 앞면 전원 버튼을 누르세요') : baseHelp;
     const where = d.u !== null ? `U${d.u}${d.def.sizeU > 1 ? `–${d.u + d.def.sizeU - 1}` : ''}` : '옆면';
