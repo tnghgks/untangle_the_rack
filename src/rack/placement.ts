@@ -35,6 +35,8 @@ export interface MovingDevice {
   on: boolean;
   /** 끌어 옮길 때: 뺄 때 꽂혀 있던 케이블과 그 경로 — 끼운 뒤 닿으면 같은 포트에 다시 꽂고 경로도 되살림 */
   plugs?: { cable: Cable; end: CableEnd; portId: string; route: Route | null }[];
+  /** 케이블 매니저: 뺄 때 이 매니저를 지나던 선과 그 경로 — 같은 id로 다시 끼우면 경로·묶음을 되살림 */
+  routes?: { cable: Cable; guides: string[]; tied: string[] }[];
 }
 
 export interface Placement {

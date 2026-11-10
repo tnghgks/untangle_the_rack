@@ -14,6 +14,7 @@ import { endNode } from './cable/cable';
 import { plug } from './cable/plug';
 import { canReach } from './cable/reach';
 import { createPlacement, type MovingDevice } from './rack/placement';
+import type { Device } from './rack/device';
 import { CABLES, DEVICES, isSideDef, START_MONEY, type DeviceDefId } from './data/catalog';
 import { events, type ToolId } from './core/events';
 import { createHud } from './ui/hud';
@@ -87,6 +88,10 @@ const reinstall = (id: DeviceDefId, u: number, moving: MovingDevice) => {
   const device = room.install(id, u, moving.id);
   if (!device) return;
   if (moving.on) room.setPower(device, true);
+  // 옮긴 매니저: 지나던 선을 같은 경로·묶음으로 되살림 (그새 다른 경로에 들었거나 뽑힌 선은 그대로)
+  for (const { cable, guides, tied } of moving.routes ?? []) {
+    if (!cable.route) room.routeWith(cable, guides, tied);
+  }
   // 끌어 옮긴 것: 꽂혀 있던 케이블을 같은 포트에 다시 꽂음 (케이블 길이가 닿는 것만)
   if (moving.plugs) {
     let kept = 0;
@@ -109,6 +114,11 @@ const reinstall = (id: DeviceDefId, u: number, moving: MovingDevice) => {
   const after = `뒷면에서 케이블을 다시 꽂으세요${moving.on ? '' : ' · 앞면 전원 버튼을 누르세요'}`;
   flashHint(`${DEVICES[id].name}: U${u}에 다시 끼움${DEVICES[id].rings ? '' : ` · ${after}`}`);
 };
+/** 이 장비(매니저)를 지나는 선들의 경로 — room.remove가 풀기 전에 잡아 둠 (판매는 잡지 않음 → 풀림) */
+const routesThrough = (device: Device) =>
+  room.world.cables.flatMap((cable) =>
+    cable.route?.guides.includes(device.id) ? [{ cable, guides: [...cable.route.guides], tied: [...cable.route.tied] }] : [],
+  );
 let tool: ToolId = 'hand';
 events.on('tool:set', (t) => {
   tool = t;
@@ -184,7 +194,7 @@ createDeviceDrag({
       const { route } = p.plugged.cable;
       return [{ ...p.plugged, portId: p.id, route: route && { guides: [...route.guides], tied: [...route.tied] } }];
     });
-    const moving: MovingDevice = { id: device.id, u: device.u!, on: device.on, plugs };
+    const moving: MovingDevice = { id: device.id, u: device.u!, on: device.on, plugs, routes: routesThrough(device) };
     inspector.close();
     if (!room.remove(device)) return;
     placement.hold(device.def.id, moving, true);
@@ -197,7 +207,7 @@ const inspector = createInspector({
   controls: rig.controls,
   room,
   onRemove(device) {
-    const moving: MovingDevice = { id: device.id, u: device.u!, on: device.on };
+    const moving: MovingDevice = { id: device.id, u: device.u!, on: device.on, routes: routesThrough(device) };
     if (!room.remove(device)) return;
     placement.hold(device.def.id, moving);
   },
