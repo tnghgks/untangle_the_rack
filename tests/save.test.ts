@@ -94,6 +94,10 @@ describe('save', () => {
     expect(parsed).not.toBeNull();
     const back = restoreRoom(new THREE.Scene(), new THREE.Group(), parsed!);
     expect(back.world.cables[0].ends.map((p) => p?.id)).toEqual(room.world.cables[0].ends.map((p) => p?.id));
+    // 옛 띠는 무시: 마디를 고정하지 않고, 경로 없이 물리로
+    expect(back.world.cables[0].rope.isPinned(10)).toBe(false);
+    expect(back.world.cables[0].rope.frozen).toBe(false);
+    expect(back.world.cables[0].route).toBeNull();
   });
 
   it('깨진 저장은 무시', () => {
