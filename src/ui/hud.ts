@@ -1,5 +1,4 @@
 import { events, type ToolId, type ViewMode } from '../core/events';
-import { incomeFactor } from '../game/thermal';
 import { LED_COLOR, type LedState } from '../rack/device';
 import { formatMoney, formatRate } from './format';
 
@@ -11,8 +10,6 @@ export interface HudModel {
   incomePerSec: number;
   powerUsed: number;
   powerCap: number;
-  /** 공기 흐름 0~1 (thermal.ts). incomePerSec은 이미 스로틀링을 뺀 값 */
-  airflow: number;
   /** 가장 위험한 PDU 경고 (차단·과부하 직전). null = 괜찮음 */
   pduWarn: string | null;
 }
@@ -25,6 +22,8 @@ export interface Hud {
   setHint(text: string | null): void;
   /** 개발용 성능 표시 (왼쪽 아래). 처음 호출될 때 나타남 */
   setDebug(text: string): void;
+  /** 전력 칸을 잠깐 밝혔다 돌림 (묶어서 전력이 줄었을 때) */
+  pulsePower(): void;
 }
 
 const LED_HELP: [LedState, string][] = [
@@ -54,19 +53,19 @@ const GUIDE_HTML = `
   <ul>
     <li>스위치 랜 포트가 다 차면 스위치 24포트</li>
     <li>PDU는 콘센트 8개·3,000W. 넘으면 차단기가 내려가니 PDU를 추가해 나눠 꽂기</li>
-    <li>랙 뒤로 늘어진 케이블은 배기를 막아 🌀 공기 흐름이 떨어지고 수익이 최대 50% 줄어요. 막는 부분은 주황빛으로 깜빡여요 · 🔗 벨크로로 뒷면 기둥에 묶거나 🧷 케이블 매니저 고리에 걸기</li>
   </ul>
   <h3>조작</h3>
   <ul>
     <li>가운데 버튼 드래그: 회전 · 오른쪽 또는 Shift+왼쪽 드래그: 이동 · 휠: 확대</li>
     <li>케이블 끄는 중 휠: 앞뒤로 밀기 · 꽂힌 커넥터는 직접 잡고 끌어야 뽑힘 (케이블을 당겨도 안 빠짐)</li>
-    <li>🔗 벨크로 (2): 케이블을 끌어 뒷면 기둥 위에 대면 기둥에 붙음 → 든 채로 Space(또는 오른쪽 클릭)로 띠 감기 · 같은 높이에 또 감으면 한 다발 · 띠를 클릭하면 풀기 · 세게 당기면 떨어져요</li>
-    <li>🧷 케이블 매니저 (상점, 1U): 뒷면 고리에 케이블을 끌어 대고 Space(또는 오른쪽 클릭)로 걸기 · 손·벨크로 도구 둘 다 · 고리를 클릭하면 빼기 · 높이 달수록 남는 선이 덜 늘어져요</li>
-    <li>🧷 세로 케이블 매니저 (상점, 옆면): 랙 옆 세로 고리 줄 · 포트에서 옆으로 끌어 위쪽 고리에 걸었다가 아래 고리로 다시 내려 걸면 남는 선이 덕트를 따라 정리돼요 (랙 폭 밖이라 배기를 안 막음)</li>
+    <li>🧷 케이블 매니저 (상점): 뒷면 1U 가로 고리 · 옆면 세로 고리 · 늘어진 선을 끌어 매니저에 놓기 → 🔗 벨크로로 다발 묶기 → ⚡ 전력이 줄어요</li>
     <li>💰 판매 (3): 장비나 케이블을 클릭하면 바로 판매, 산 값의 50% 환급 (시작 지급은 0원)</li>
     <li>장비 클릭: 정보 카드 (켜기·끄기·빼기) · 장비 끌기: 다른 칸으로 옮기기 (꽂힌 케이블은 닿으면 그대로) · Esc: 취소</li>
   </ul>
 `;
+
+/** 전력 칸 강조 시간 (styles.css power-pulse와 같게) */
+const PULSE_MS = 400;
 
 /** 새 게임 버튼 → 확인 뒤 onNewGame. guideOpen: 처음 시작이면 가이드를 펼친 채로 */
 export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = false): Hud {
@@ -75,7 +74,6 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
       <span class="stat money" data-k="money"></span>
       <span class="stat rate" data-k="rate"></span>
       <span class="stat power" data-k="power"></span>
-      <span class="stat air" data-k="air"></span>
       <span class="stat warn" data-k="warn" hidden></span>
       <button class="guide-toggle" type="button" aria-expanded="false">가이드</button>
       <button class="new-game" type="button" title="저장을 지우고 처음부터">새 게임</button>
@@ -91,7 +89,7 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
       </div>
       <div class="group" role="group" aria-label="도구">
         <button class="on" data-tool="hand" title="케이블 잡아 끌기·꽂기 (1)">✋ 손</button>
-        <button data-tool="velcro" title="케이블을 끌어 기둥에 대고 Space로 띠 감기, 띠를 클릭하면 풀기 (2)">🔗 벨크로</button>
+        <button data-tool="velcro" title="경로에 든 다발을 클릭해 묶기 (2)">🔗 벨크로</button>
         <button data-tool="sell" title="장비나 케이블을 클릭하면 바로 판매, 산 값의 50% 환급 (3)">💰 판매</button>
       </div>
     </nav>
@@ -102,7 +100,6 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
   const money = field('money');
   const rate = field('rate');
   const power = field('power');
-  const air = field('air');
   const warn = field('warn');
   root.querySelector('.new-game')!.addEventListener('click', () => {
     if (window.confirm('저장을 지우고 처음부터 시작할까요? 되돌릴 수 없어요.')) onNewGame();
@@ -119,6 +116,7 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
   setGuide(guideOpen);
   const debug = root.querySelector<HTMLElement>('.hud-debug')!;
   const hint = root.querySelector<HTMLElement>('.hud-hint')!;
+  let pulseTimer = 0;
 
   const viewButtons = root.querySelectorAll<HTMLButtonElement>('[data-view]');
   viewButtons.forEach((b) => b.addEventListener('click', () => events.emit('view:set', b.dataset.view as ViewMode)));
@@ -146,12 +144,18 @@ export function createHud(root: HTMLElement, onNewGame: () => void, guideOpen = 
     setModel(m) {
       money.textContent = `💰 ${formatMoney(m.money)}`;
       rate.textContent = formatRate(m.incomePerSec);
-      power.textContent = `⚡ ${m.powerUsed.toLocaleString('ko-KR')} / ${m.powerCap.toLocaleString('ko-KR')}W`;
-      const cut = Math.round((1 - incomeFactor(m.airflow)) * 100);
-      air.textContent = `🌀 공기 흐름 ${Math.round(m.airflow * 100)}%` + (cut > 0 ? ` · 수익 −${cut}%` : '');
-      air.classList.toggle('bad', cut > 0);
+      // 정리 보상으로 소수가 생기므로 정수로 반올림해 보여 줌
+      power.textContent = `⚡ ${Math.round(m.powerUsed).toLocaleString('ko-KR')} / ${m.powerCap.toLocaleString('ko-KR')}W`;
       warn.hidden = m.pduWarn === null;
       warn.textContent = m.pduWarn ?? '';
+    },
+    pulsePower() {
+      // 연달아 묶으면 처음부터 다시 (클래스를 뺐다가 다시 붙여 애니메이션을 재시작)
+      power.classList.remove('pulse');
+      void power.offsetWidth;
+      power.classList.add('pulse');
+      clearTimeout(pulseTimer);
+      pulseTimer = window.setTimeout(() => power.classList.remove('pulse'), PULSE_MS);
     },
     setDebug(text) {
       debug.hidden = false;

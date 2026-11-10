@@ -11,7 +11,7 @@ function dev(id: string, role: PowerRole, opts: Partial<PowerDevice> = {}): Powe
   return {
     id, role, on: role === 'pdu', watts: role === 'server' ? 250 : role === 'switch' ? 30 : 0,
     incomePerSec: role === 'server' ? 3 : 0, capacity: role === 'pdu' ? 3000 : 0, tripped: false, load: 0, demand: 0,
-    ports, bootStart: null, status: 'off', ready: false, ...opts,
+    saving: 0, ports, bootStart: null, status: 'off', ready: false, ...opts,
   };
 }
 
@@ -165,5 +165,36 @@ describe('ready (뒷면 파란 등)', () => {
     pdu.tripped = true;
     updatePower(devs, l, 0);
     expect(srv.ready).toBe(false);
+  });
+});
+
+describe('saving (정리 보상)', () => {
+  function overloaded() {
+    const pdu = dev('pdu', 'pdu', { capacity: 1000 });
+    const a = dev('a', 'server', { on: true, watts: 600 });
+    const b = dev('b', 'server', { on: true, watts: 600 });
+    const l = links(['pdu:power0', 'a:power1'], ['pdu:power1', 'b:power1']);
+    return { devs: [pdu, a, b], pdu, a, b, l };
+  }
+
+  it('saving만큼 PDU 부하가 줄어 차단되지 않음', () => {
+    const { devs, pdu, a, b, l } = overloaded();
+    a.saving = 0.2;
+    b.saving = 0.2;
+    const s = updatePower(devs, l, 0);
+    expect(pdu.tripped).toBe(false);
+    expect(s.powerUsed).toBe(960);
+  });
+
+  it('saving이 0으로 돌아가면 다시 차단', () => {
+    const { devs, pdu, a, b, l } = overloaded();
+    a.saving = 0.2;
+    b.saving = 0.2;
+    updatePower(devs, l, 0);
+    expect(pdu.tripped).toBe(false);
+    a.saving = 0;
+    b.saving = 0;
+    updatePower(devs, l, 100);
+    expect(pdu.tripped).toBe(true);
   });
 });

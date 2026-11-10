@@ -55,8 +55,12 @@ html, body {
 .hud-top .money { font-weight: 700; font-size: 1.15rem; }
 .hud-top .rate { color: var(--accent); align-self: center; }
 .hud-top .power { color: var(--muted); align-self: center; }
-.hud-top .air { color: var(--muted); align-self: center; }
-.hud-top .air.bad { color: #ff8a5c; }
+/* 묶어서 전력이 줄어든 순간 잠깐 밝아졌다 돌아옴 (hud.ts PULSE_MS) */
+.hud-top .power.pulse { animation: power-pulse 400ms ease-out; }
+@keyframes power-pulse {
+  from { color: #ffe27a; text-shadow: 0 0 8px rgba(255, 214, 90, 0.85); }
+  to { color: var(--muted); text-shadow: none; }
+}
 .hud-top .warn { color: #ffc23c; align-self: center; font-weight: 600; }
 .hud-top .warn[hidden] { display: none; }
 .hud-top .new-game, .hud-top .guide-toggle {

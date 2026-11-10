@@ -1,12 +1,9 @@
 import * as THREE from 'three';
 import { CABLE_RADIUS, type Cable } from './cable';
-import type { Aabb } from './collide';
-import { segmentInBox } from '../game/thermal';
 
 // 튜브 메시: 노드 사이를 Catmull-Rom으로 SUBDIV 등분한 곡선에 링을 하나씩.
 // 버퍼는 한 번 만들고 매 프레임 정점·법선만 다시 쓴다.
 // 링 방향은 투영식 평행 이동(이전 법선을 접선에 수직으로 투영)이라 꼬이지 않는다.
-// 배기 통로(zone)를 막는 토막은 주황빛으로 깜빡인다 (정리할 곳 표시, 10-25). 꽂힌 케이블만 — 공기 흐름 계산(thermal.ts)과 같은 기준.
 
 const RADIAL = 8;
 const SUBDIV = 3;
@@ -20,8 +17,6 @@ const CONNECTOR: Record<Cable['kind'], { size: THREE.Vector3; color: number }> =
 };
 
 const Z = new THREE.Vector3(0, 0, 1);
-const HOT = new THREE.Color(0xff5a1f);
-const mix = new THREE.Color();
 
 export class CableMesh {
   readonly group = new THREE.Group();
@@ -35,21 +30,15 @@ export class CableMesh {
   private synced = -1;
   private readonly colors: Float32Array;
   private readonly base: THREE.Color;
-  /** 토막마다 배기 통로를 막는지 (모양이 바뀔 때 다시 셈) */
-  private readonly blocked: Uint8Array;
-  private anyBlocked = false;
-  /** 색을 기본색으로 되돌려야 하는지 */
-  private tinted = false;
 
-  constructor(readonly cable: Cable, private readonly zone: Aabb | null = null) {
+  constructor(readonly cable: Cable) {
     const m = (this.rings = (cable.rope.n - 1) * SUBDIV + 1);
     this.curve = new Float32Array(m * 3);
     this.positions = new Float32Array(m * RADIAL * 3);
     this.normals = new Float32Array(m * RADIAL * 3);
     this.colors = new Float32Array(m * RADIAL * 3);
-    this.blocked = new Uint8Array(cable.rope.n - 1);
     this.base = new THREE.Color(cable.color);
-    this.paint(0);
+    this.paint();
     const index: number[] = [];
     for (let i = 0; i < m - 1; i++) {
       for (let k = 0; k < RADIAL; k++) {
@@ -82,16 +71,14 @@ export class CableMesh {
     }
   }
 
-  /** timeSec: 막힌 토막 깜빡임용 */
-  update(timeSec = 0): void {
+  update(): void {
     const { rope } = this.cable;
-    if (this.anyBlocked || this.tinted) this.paint(timeSec);
     if (rope.version === this.synced) return;
     this.synced = rope.version;
-    this.findBlocked();
 
     const n = rope.n;
-    this.buildCurve(rope.pos, n);
+    if (this.cable.shape) this.fromShape(this.cable.shape);
+    else this.buildCurve(rope.pos, n);
     const p = this.curve;
     const m = this.rings;
     const r = CABLE_RADIUS[this.cable.kind];
@@ -126,37 +113,17 @@ export class CableMesh {
     geo.attributes.position.needsUpdate = true;
     geo.attributes.normal.needsUpdate = true;
 
-    this.placePlug(this.plugs[0], 0, 1);
-    this.placePlug(this.plugs[1], n - 1, n - 2);
+    this.placePlug(this.plugs[0], 0, SUBDIV);
+    this.placePlug(this.plugs[1], m - 1, m - 1 - SUBDIV);
   }
 
-  private findBlocked(): void {
-    const { zone, blocked, cable } = this;
-    this.anyBlocked = false;
-    if (!zone) return;
-    const plugged = cable.ends[0] !== null || cable.ends[1] !== null;
-    for (let i = 0; i < blocked.length; i++) {
-      blocked[i] = plugged && segmentInBox(cable.rope.pos, i, zone) ? 1 : 0;
-      if (blocked[i]) this.anyBlocked = true;
+  /** 링마다 기본색 */
+  private paint(): void {
+    const { colors, base } = this;
+    for (let i = 0; i < this.rings * RADIAL; i++) {
+      const o = i * 3;
+      colors[o] = base.r; colors[o + 1] = base.g; colors[o + 2] = base.b;
     }
-  }
-
-  /** 링마다 색: 막힌 토막은 기본색과 주황 사이를 오감 */
-  private paint(timeSec: number): void {
-    const { colors, blocked, base } = this;
-    const hot = mix.copy(base).lerp(HOT, 0.45 + 0.4 * Math.sin(timeSec * 6));
-    const last = blocked.length - 1;
-    for (let i = 0; i < this.rings; i++) {
-      const c = this.anyBlocked && blocked[Math.min(last, Math.floor(i / SUBDIV))] ? hot : base;
-      for (let k = 0; k < RADIAL; k++) {
-        const o = (i * RADIAL + k) * 3;
-        colors[o] = c.r; colors[o + 1] = c.g; colors[o + 2] = c.b;
-      }
-    }
-    this.tinted = this.anyBlocked;
-    // 생성자에서 처음 칠할 땐 아직 메시가 없음
-    const attr = this.tube?.geometry.getAttribute('color');
-    if (attr) attr.needsUpdate = true;
   }
 
   /** 노드 i..i+1 구간을 이웃 노드까지 써서 Catmull-Rom으로 나눔 (양 끝은 끝 노드를 반복) */
@@ -178,9 +145,32 @@ export class CableMesh {
     out[o] = p[e]; out[o + 1] = p[e + 1]; out[o + 2] = p[e + 2];
   }
 
-  /** 커넥터 앞 끝을 끝 노드에 두고, 케이블 반대쪽(바깥)으로 향하게 */
+  /** 경로 선: 촘촘한 모양을 호 길이로 고르게 링 수만큼 (Catmull-Rom 없이 — 모양이 이미 둥글게 꺾여 있음) */
+  private fromShape(sh: Float32Array): void {
+    const out = this.curve;
+    const k = sh.length / 3;
+    const m = this.rings;
+    let total = 0;
+    for (let i = 1; i < k; i++) total += Math.hypot(sh[i * 3] - sh[i * 3 - 3], sh[i * 3 + 1] - sh[i * 3 - 2], sh[i * 3 + 2] - sh[i * 3 - 1]);
+    let seg = 0, at = 0; // at = seg 시작까지 호 길이
+    let len = k > 1 ? Math.hypot(sh[3] - sh[0], sh[4] - sh[1], sh[5] - sh[2]) : 0;
+    for (let i = 0; i < m; i++) {
+      const d = m === 1 ? 0 : (total * i) / (m - 1);
+      while (seg < k - 2 && at + len < d) {
+        at += len;
+        seg++;
+        const o = seg * 3;
+        len = Math.hypot(sh[o + 3] - sh[o], sh[o + 4] - sh[o + 1], sh[o + 5] - sh[o + 2]);
+      }
+      const u = len > 1e-9 ? Math.min(1, (d - at) / len) : 0;
+      const a = seg * 3, b = Math.min(seg + 1, k - 1) * 3;
+      for (let c = 0; c < 3; c++) out[i * 3 + c] = sh[a + c] + (sh[b + c] - sh[a + c]) * u;
+    }
+  }
+
+  /** 커넥터 앞 끝을 곡선 끝 링에 두고, 케이블 반대쪽(바깥)으로 향하게 */
   private placePlug(mesh: THREE.Mesh, end: number, inner: number): void {
-    const p = this.cable.rope.pos;
+    const p = this.curve;
     const e = end * 3, q = inner * 3;
     plugDir.set(p[q] - p[e], p[q + 1] - p[e + 1], p[q + 2] - p[e + 2]).normalize();
     mesh.position.set(p[e], p[e + 1], p[e + 2]);

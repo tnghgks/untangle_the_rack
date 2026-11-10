@@ -27,10 +27,12 @@ export interface SavedCable {
   ends: [string | null, string | null];
   /** 마디 좌표 xyz 이어 붙임, 소수 3자리 (mm) */
   nodes: number[];
-  /** 벨크로·케이블 매니저: 묶은 마디와 고정 자리, 고리에 건 것이면 고리 id. 없으면 안 묶음 (P4 이전 저장) */
+  /** 옛 저장(벨크로·고리 걸기 시절)의 묶은 마디. 더는 안 쓰고 검증만 통과시킨다 */
   ties?: { node: number; pos: [number, number, number]; hook?: string }[];
   /** 상점에서 낸 값 (판매 환급용). 없으면 0 — 시작 배선·옛 저장 */
   paid?: number;
+  /** 가이드 경로 (지나는 가이드 순서·묶은 가이드). 없으면 늘어진 로프 */
+  route?: { guides: string[]; tied: string[] };
 }
 
 export interface SaveData {
@@ -62,7 +64,12 @@ export function parseSave(text: string | null): SaveData | null {
 
 const num = (x: unknown): x is number => typeof x === 'number' && Number.isFinite(x);
 const portId = (x: unknown) => x === null || typeof x === 'string';
-const tieOk = (t: unknown) => {
+const strings = (x: unknown) => Array.isArray(x) && x.every((v) => typeof v === 'string');
+const routeOk = (r: unknown) => {
+  const x = r as { guides?: unknown; tied?: unknown };
+  return typeof r === 'object' && r !== null && strings(x.guides) && strings(x.tied);
+};
+const tieOk =(t: unknown) => {
   const r = t as { node?: unknown; pos?: unknown; hook?: unknown };
   return typeof t === 'object' && t !== null && Number.isInteger(r.node) && Array.isArray(r.pos) && r.pos.length === 3 && r.pos.every(num) &&
     (r.hook === undefined || typeof r.hook === 'string');
@@ -82,7 +89,8 @@ function isSave(d: unknown): d is SaveData {
     Array.isArray(x.ends) && x.ends.length === 2 && x.ends.every(portId) &&
     Array.isArray(x.nodes) && x.nodes.length % 3 === 0 && x.nodes.every(num) &&
     (x.ties === undefined || (Array.isArray(x.ties) && x.ties.every(tieOk))) &&
-    (x.paid === undefined || (num(x.paid) && x.paid >= 0)));
+    (x.paid === undefined || (num(x.paid) && x.paid >= 0)) &&
+    (x.route === undefined || routeOk(x.route)));
   return devOk && cabOk;
 }
 

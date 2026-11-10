@@ -51,6 +51,8 @@ export class Rope {
   /** 모양이 바뀔 때마다 증가 — 렌더러가 갱신 여부를 판단 */
   version = 0;
   sleeping = false;
+  /** 가이드 경로에 든 선: 물리를 멈추고 setPath로 깐 모양 그대로 둔다. 풀 때는 false로 하고 wake() */
+  frozen = false;
 
   private readonly start: Float32Array;
   private readonly sleepRef: Float32Array;
@@ -103,6 +105,14 @@ export class Rope {
     }
     this.prev.set(this.pos);
     this.wake();
+  }
+
+  /** 경로 모양으로 마디를 깔고 멈춤 (마디 수는 그대로 — 꺾은선 길이가 로프와 달라도 호 길이로 고르게 나눔) */
+  setPath(points: readonly Vec3[]): void {
+    this.setFromPolyline(points);
+    this.frozen = true;
+    this.sleeping = true;
+    this.version++;
   }
 
   pin(i: number, x: number, y: number, z: number): void {
@@ -161,7 +171,7 @@ export class Rope {
     let overshoot = 0;
     let anchor = -1;
     if (g < 0) return { overshoot, anchor };
-    // 양쪽에서 가장 가까운 고정점만 — 그 너머 고정점(벨크로 건너 꽂힌 끝)은 당겨지지 않는다
+    // 양쪽에서 가장 가까운 고정점만 — 그 너머 고정점은 당겨지지 않는다
     let lo = g, hi = g;
     while (lo >= 0 && !this.pinned[lo]) lo--;
     while (hi < this.n && !this.pinned[hi]) hi++;
@@ -200,7 +210,7 @@ export class Rope {
   }
 
   step(dt: number, boxes: readonly Aabb[]): void {
-    if (this.sleeping) return;
+    if (this.frozen || this.sleeping) return;
     const { cfg, n, pos, prev, pinned, pinPos } = this;
     const g = this.grabIndex;
     this.start.set(pos);

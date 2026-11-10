@@ -3,17 +3,18 @@ import { startLoop } from './core/loop';
 import { createStage } from './view/scene';
 import { createCameraRig } from './view/camera';
 import { createCableDrag } from './view/drag';
-import { createVelcroTool } from './view/velcro';
-import { createManagerTool } from './view/manager';
 import { createSellTool } from './view/sell';
 import { createStartRoom, restoreRoom } from './view/room';
 import { createPowerButtons } from './view/powerButton';
 import { createHover } from './view/hover';
 import { createDeviceDrag } from './view/deviceDrag';
+import { createGuideTool } from './view/guide';
+import { createTieTool } from './view/tie';
 import { endNode } from './cable/cable';
 import { plug } from './cable/plug';
-import { canReach } from './cable/velcro';
+import { canReach } from './cable/reach';
 import { createPlacement, type MovingDevice } from './rack/placement';
+import type { Device } from './rack/device';
 import { CABLES, DEVICES, isSideDef, START_MONEY, type DeviceDefId } from './data/catalog';
 import { events, type ToolId } from './core/events';
 import { createHud } from './ui/hud';
@@ -63,7 +64,7 @@ const buy = (id: DeviceDefId): boolean => {
   return true;
 };
 
-// 입력 우선순위는 등록 순서: 장비 들기 → 판매 → 전원 버튼 → 벨크로 → 매니저 고리 → 케이블 드래그(손) → 장비 끌기 → 장비 정보 카드 → OrbitControls
+// 입력 우선순위는 등록 순서: 장비 들기 → 판매 → 전원 버튼 → 벨크로 묶기 → 케이블 드래그(손) → 장비 끌기 → 장비 정보 카드 → OrbitControls
 const placement = createPlacement({
   canvas,
   camera: stage.camera,
@@ -87,12 +88,20 @@ const reinstall = (id: DeviceDefId, u: number, moving: MovingDevice) => {
   const device = room.install(id, u, moving.id);
   if (!device) return;
   if (moving.on) room.setPower(device, true);
+  // 옮긴 매니저: 지나던 선을 같은 경로·묶음으로 되살림 (그새 다른 경로에 들었거나 뽑힌 선은 그대로)
+  for (const { cable, guides, tied } of moving.routes ?? []) {
+    if (!cable.route) room.routeWith(cable, guides, tied);
+  }
   // 끌어 옮긴 것: 꽂혀 있던 케이블을 같은 포트에 다시 꽂음 (케이블 길이가 닿는 것만)
   if (moving.plugs) {
     let kept = 0;
     for (const p of moving.plugs) {
       const port = device.ports.find((x) => x.id === p.portId);
       if (port && canReach(p.cable, endNode(p.cable, p.end), port.pos) && plug(p.cable, p.end, port)) kept++;
+    }
+    // 다 꽂은 뒤 경로를 되살림 (양 끝이 이 장비에 있는 선도 두 끝이 다 꽂힌 다음에)
+    for (const { cable, route } of moving.plugs) {
+      if (route && !cable.route) room.routeWith(cable, route.guides, route.tied);
     }
     const lost = moving.plugs.length - kept;
     flashHint(
@@ -102,14 +111,19 @@ const reinstall = (id: DeviceDefId, u: number, moving: MovingDevice) => {
     return;
   }
   // device:installed의 "전원 버튼을 누르세요" 안내를 덮어씀 (켜진 채 뺐으면 이미 켜져 있음)
-  const after = DEVICES[id].rings ? '뒷면 고리에 케이블을 다시 거세요' : `뒷면에서 케이블을 다시 꽂으세요${moving.on ? '' : ' · 앞면 전원 버튼을 누르세요'}`;
-  flashHint(`${DEVICES[id].name}: U${u}에 다시 끼움 · ${after}`);
+  const after = `뒷면에서 케이블을 다시 꽂으세요${moving.on ? '' : ' · 앞면 전원 버튼을 누르세요'}`;
+  flashHint(`${DEVICES[id].name}: U${u}에 다시 끼움${DEVICES[id].rings ? '' : ` · ${after}`}`);
 };
+/** 이 장비(매니저)를 지나는 선들의 경로 — room.remove가 풀기 전에 잡아 둠 (판매는 잡지 않음 → 풀림) */
+const routesThrough = (device: Device) =>
+  room.world.cables.flatMap((cable) =>
+    cable.route?.guides.includes(device.id) ? [{ cable, guides: [...cable.route.guides], tied: [...cable.route.tied] }] : [],
+  );
 let tool: ToolId = 'hand';
 events.on('tool:set', (t) => {
   tool = t;
-  if (t === 'velcro') flashHint('🔗 벨크로: 케이블을 끌어 뒷면 기둥 위에 대고 Space(또는 오른쪽 클릭)로 감기 · 띠를 클릭하면 풀기');
   if (t === 'sell') flashHint('💰 판매: 장비나 케이블을 클릭하면 바로 팔아요 (산 값의 50%) · 1 손으로 돌아가기');
+  if (t === 'velcro') flashHint('🔗 벨크로: 매니저에 들어간 다발을 클릭하면 묶여요');
 });
 // 판매는 전원 버튼·케이블 끌기·정보 카드보다 먼저 — 클릭 즉시 판다
 createSellTool({
@@ -132,39 +146,39 @@ createSellTool({
   },
 });
 createPowerButtons(canvas, stage.camera, rig.controls, room);
-// 벨크로는 케이블 끌기보다 먼저 — 기둥 위 클릭을 가로챈다
-const velcro = createVelcroTool({
+// 선 가운데를 끌어 케이블 매니저 위에 놓으면 경로에 듦 (끄는 동안 강조·점선 미리보기)
+const guideTool = createGuideTool({
   canvas,
   camera: stage.camera,
   scene: stage.scene,
-  world: room.world,
-  drag: () => cableDrag,
-  active: () => tool === 'velcro',
-  flash: (text) => flashHint(text),
-});
-// 매니저 고리도 케이블 끌기보다 먼저 — 손·벨크로 도구 둘 다
-const manager = createManagerTool({
-  canvas,
-  camera: stage.camera,
   room,
   drag: () => cableDrag,
   active: () => tool === 'hand' || tool === 'velcro',
-  flash: (text) => flashHint(text),
+});
+// 벨크로: 경로에 든 다발을 클릭하면 묶음 (케이블 끌기보다 먼저 — 묶을 다발이 아니면 손처럼 끌림).
+// 묶는 순간 글씨는 띄우지 않고 전력 칸만 반짝
+const tieTool = createTieTool({
+  canvas,
+  camera: stage.camera,
+  scene: stage.scene,
+  room,
+  guides: guideTool,
+  active: () => tool === 'velcro',
+  onTied() {
+    advance();
+    hud.pulsePower();
+  },
 });
 const cableDrag = createCableDrag({
   canvas,
   camera: stage.camera,
   controls: rig.controls,
   world: room.world,
-  // 벨크로 도구로도 끌어서 기둥에 걸침
   enabled: () => tool === 'hand' || tool === 'velcro',
   showPortHint: room.showPortHint,
-  // 고리가 기둥보다 작은 과녁이라 먼저 (둘 다 부르는 건 안 붙은 쪽의 잡은 자리를 지우려고)
-  snap: (ray) => {
-    const ring = manager.snap(ray);
-    const post = velcro.snap(ring ? null : ray);
-    return ring ?? post;
-  },
+  // 경로에 든 선을 잡으면 빠져나와 다시 끌 수 있음
+  onGrab: (cable) => room.unroute(cable),
+  onRelease: guideTool.onRelease,
 });
 // 장비 몸체를 끌면 랙에서 빼서 든 채로 → 떼는 칸에 끼움. 케이블 끌기 뒤(케이블이 먼저), 정보 카드 앞
 createDeviceDrag({
@@ -174,8 +188,13 @@ createDeviceDrag({
   active: () => tool === 'hand' || tool === 'velcro',
   busy: () => placement.held !== null,
   start(device) {
-    const plugs = device.ports.flatMap((p) => (p.plugged ? [{ ...p.plugged, portId: p.id }] : []));
-    const moving: MovingDevice = { id: device.id, u: device.u!, on: device.on, plugs };
+    // 경로는 room.remove가 풀기 전에 잡아 둠
+    const plugs = device.ports.flatMap((p) => {
+      if (!p.plugged) return [];
+      const { route } = p.plugged.cable;
+      return [{ ...p.plugged, portId: p.id, route: route && { guides: [...route.guides], tied: [...route.tied] } }];
+    });
+    const moving: MovingDevice = { id: device.id, u: device.u!, on: device.on, plugs, routes: routesThrough(device) };
     inspector.close();
     if (!room.remove(device)) return;
     placement.hold(device.def.id, moving, true);
@@ -188,12 +207,19 @@ const inspector = createInspector({
   controls: rig.controls,
   room,
   onRemove(device) {
-    const moving: MovingDevice = { id: device.id, u: device.u!, on: device.on };
+    const moving: MovingDevice = { id: device.id, u: device.u!, on: device.on, routes: routesThrough(device) };
     if (!room.remove(device)) return;
     placement.hold(device.def.id, moving);
   },
 });
-createHover({ canvas, camera: stage.camera, room, busy: () => placement.held !== null, tool: () => tool });
+createHover({
+  canvas,
+  camera: stage.camera,
+  room,
+  busy: () => placement.held !== null,
+  tool: () => tool,
+  cursorAt: tieTool.cursorAt,
+});
 
 let hintTimer = 0;
 const flashHint = (text: string) => {
@@ -210,7 +236,7 @@ events.on('placement:held', (id) => {
 events.on('device:installed', ({ deviceId }) =>
   flashHint(
     room.device(deviceId)?.def.rings
-      ? '🧷 케이블 매니저 설치 · 뒷면 고리에 케이블을 끌어 대고 Space로 걸기 (높이 달수록 남는 선이 덜 늘어져요)'
+      ? '🧷 케이블 매니저 설치 · 늘어진 선을 끌어다 매니저에 놓으면 정리돼요'
       : '설치 완료 · 뒷면에서 전원선·랜선을 연결하고 앞면 전원 버튼을 누르세요',
   ),
 );
@@ -232,7 +258,7 @@ const shop = createShop(hud.shopPanel, {
       flashHint(
         id === 'pdu'
           ? 'PDU를 랙 옆면에 달았어요 · 뒷면에서 콘센트에 전원선을 꽂으세요'
-          : `🧷 세로 케이블 매니저를 ${d.side === 0 ? '왼쪽' : '오른쪽'} 옆면에 달았어요 · 케이블을 옆으로 끌어 고리에 대고 Space · 위쪽 고리에 걸었다가 아래 고리로 다시 내려 걸면 남는 선이 정리돼요`,
+          : `🧷 세로 케이블 매니저를 ${d.side === 0 ? '왼쪽' : '오른쪽'} 옆면에 달았어요`,
       );
       return;
     }
@@ -265,10 +291,9 @@ const advance = () => {
 // 배선·전원·설치가 바뀌면 바로 LED·수익에 반영
 events.on('cable:plugged', advance);
 events.on('cable:unplugged', advance);
-events.on('cable:tied', advance);
-events.on('cable:untied', advance);
-// 손으로 세게 당겨 떨어진 것 (띠를 클릭해 푼 건 벨크로 도구의 안내가 바로 뒤에 덮어씀)
-events.on('cable:untied', () => flashHint('🔗 벨크로가 떨어졌어요'));
+// 경로에 들고 빠지면 정리 보상(전력 감소)이 바뀜
+events.on('cable:routed', advance);
+events.on('cable:unrouted', advance);
 events.on('device:power', advance);
 events.on('device:installed', advance);
 events.on('device:removed', advance);
@@ -316,15 +341,17 @@ startLoop({
   },
   render() {
     const now = Date.now();
-    rig.update((now - lastRealMs) / 1000);
+    const dtSec = (now - lastRealMs) / 1000;
+    rig.update(dtSec);
     placement.refresh();
     lastRealMs = now;
     advance();
-    hud.setModel({ money: state.money, ...room.summary, incomePerSec: room.incomePerSec, airflow: room.airflow, pduWarn: pduWarn() });
+    hud.setModel({ money: state.money, ...room.summary, incomePerSec: room.incomePerSec, pduWarn: pduWarn() });
     inspector.update();
+    // 묶는 연출이 마디를 먼저 옮겨야 같은 프레임 메시에 반영됨
+    tieTool.sync(dtSec);
     room.sync(performance.now() / 1000);
-    velcro.sync();
-    manager.sync();
+    guideTool.sync();
     stage.renderer.render(stage.scene, stage.camera);
 
     if (debug) {

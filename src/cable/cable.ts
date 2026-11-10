@@ -2,7 +2,6 @@
 
 import type { Aabb, Vec3 } from './collide';
 import { Rope } from './rope';
-import type { Tie } from './velcro';
 
 export type PortKind = 'lan' | 'power';
 export type CableEnd = 0 | 1;
@@ -23,16 +22,24 @@ export interface Cable {
   rope: Rope;
   ends: [Port | null, Port | null];
   color: number;
-  /** 뒷면 기둥에 묶은 벨크로 (velcro.ts) */
-  ties: Tie[];
   /** 상점에서 낸 값 (판매 환급용). 시작 배선은 0 */
   paid: number;
+  /** 가이드 경로에 들었으면 그 경로 (null = 늘어진 로프) */
+  route: Route | null;
+  /** 경로 선의 촘촘한 모양 [x,y,z]* (둥근 꺾임까지) — 메시는 이걸로 그림. 늘어진 로프면 null (로프 마디로 그림) */
+  shape: Float32Array | null;
+}
+
+/** 가이드 경로: 지나는 가이드(매니저 id) 순서와 그중 벨크로로 묶은 가이드 */
+export interface Route {
+  guides: string[];
+  tied: string[];
 }
 
 export const CABLE_RADIUS: Record<PortKind, number> = { lan: 0.003, power: 0.004 };
 
 export function createCable(id: string, kind: PortKind, length: number, color: number): Cable {
-  return { id, kind, rope: new Rope(length, { radius: CABLE_RADIUS[kind] }), ends: [null, null], color, ties: [], paid: 0 };
+  return { id, kind, rope: new Rope(length, { radius: CABLE_RADIUS[kind] }), ends: [null, null], color, paid: 0, route: null, shape: null };
 }
 
 export function endNode(cable: Cable, end: CableEnd): number {

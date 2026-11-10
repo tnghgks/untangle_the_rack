@@ -10,9 +10,11 @@ export interface GameEvents {
   'tool:set': ToolId;
   'cable:plugged': { cableId: string; portId: string };
   'cable:unplugged': { cableId: string; portId: string };
-  /** 벨크로를 묶음 / 풂 (손으로 세게 당겨 떨어진 것 포함) */
-  'cable:tied': { cableId: string; node: number };
-  'cable:untied': { cableId: string; node: number };
+  /** 선이 가이드 경로에 듦 / 경로에서 빠짐 */
+  'cable:routed': { cableId: string };
+  'cable:unrouted': { cableId: string };
+  /** 가이드 한 구간을 벨크로로 묶음 — 그때 새로 묶인 선들 */
+  'cable:tied': { guideId: string; cableIds: string[] };
   'device:installed': { deviceId: string };
   /** 랙에서 뺌 (손에 들림 — 다시 끼우면 같은 id로 device:installed) */
   'device:removed': { deviceId: string };

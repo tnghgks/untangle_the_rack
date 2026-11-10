@@ -2,17 +2,16 @@ import * as THREE from 'three';
 import { createCable, CableWorld, type Cable, type Port, type PortKind } from '../cable/cable';
 import { CableMesh } from '../cable/cableMesh';
 import type { Aabb, Vec3 } from '../cable/collide';
+import { guideOf, type Guide } from '../cable/guide';
 import { plug, unplug, type PortHit } from '../cable/plug';
-import { deviceOfHook, releaseDevice } from '../cable/manager';
-import { restoreTie, untie } from '../cable/velcro';
+import { findRoute, laneKey, laneOffsets, laneOrder, resample, routeLayout, smoothLayout, tidyDegree, type LaneOffset, type RouteLayout } from '../cable/route';
 import { events } from '../core/events';
 import { createRng } from '../core/rng';
 import { isSideDef, type DeviceDefId, type SideDefId } from '../data/catalog';
 import { CABLE_DEFAULT_LENGTH, RACK_HEIGHT } from '../data/units';
 import { BOOT_MS, resetBreaker, updatePower, type PowerSummary } from '../game/power';
 import { round3, type SaveData, type SavedCable, type SavedDevice } from '../game/save';
-import { airflowOf, blockedLength, incomeFactor } from '../game/thermal';
-import { createPdu, createRackDevice, createSideManager, EXHAUST_ZONE, PDU_SIDES, setDeviceLed, setDevicePower, type Device, type Socket } from '../rack/device';
+import { createPdu, createRackDevice, createSideManager, PDU_SIDES, setDeviceLed, setDevicePower, type Device, type Socket } from '../rack/device';
 import { RackSlots } from '../rack/rack';
 import { collectColliders } from './scene';
 
@@ -22,6 +21,15 @@ import { collectColliders } from './scene';
 const LAN_COLORS = [0x2f7fd8, 0xe0b020, 0x38a860, 0xd0483c];
 const POWER_COLOR = 0x23262b;
 const BLINK_COLOR = new THREE.Color(0xd9a400);
+
+/** 정리 보상: 장비에 꽂힌 선이 모두 다 묶였을 때 줄어드는 전력 비율 (첫 값, 플레이로 조정) */
+export const TIDY_POWER_CUT = 0.15;
+/** 묶이지 않은 가이드 구간의 구불거림 진폭 m (tight 1이면 0) — 차선이 벌어지는 방향과 수직(z)으로 */
+const WOBBLE = 0.008;
+/** 구불거림 주기 m */
+const WOBBLE_PERIOD = 0.25;
+/** 경로 선 모양 점 간격 m (메시가 이 모양을 따라 그림) */
+const SHAPE_STEP = 0.008;
 
 function polylineLength(pts: Vec3[]): number {
   let L = 0;
@@ -41,17 +49,17 @@ export class Room {
   private readonly boxes = new Map<Device, Aabb[]>();
   private hinted: Socket | null = null;
   private serial = 0;
+  /** 케이블 id 번호 — 팔아도 되돌리지 않아 id가 겹치지 않음 (불러오면 저장된 id의 가장 큰 번호 다음부터) */
+  private cableSerial = 0;
   private spawned = 0;
   private stressCables: Cable[] = [];
   private readonly rng = createRng(42);
   /** 마지막 가동 판정 결과 */
   summary: PowerSummary = { incomePerSec: 0, powerUsed: 0, powerCap: 0 };
-  /** 마지막 판정의 공기 흐름 0~1 (thermal.ts) */
-  airflow = 1;
 
-  /** 스로틀링을 뺀 실제 초당 수익 */
+  /** 초당 수익 */
   get incomePerSec(): number {
-    return this.summary.incomePerSec * incomeFactor(this.airflow);
+    return this.summary.incomePerSec;
   }
 
   constructor(
@@ -59,6 +67,11 @@ export class Room {
     readonly rack: THREE.Group,
   ) {
     this.world.colliders.push(...collectColliders(rack));
+    // 어디서든 커넥터가 뽑히면 경로에서 빠짐. 버스는 전역이고 id만 오므로 id로 찾지 않고,
+    // 이 방의 선 중 경로에 든 채 끝이 빠진 선(그 객체)을 푼다 (장비 빼기·판매는 Cable 객체로 직접 푼다)
+    events.on('cable:unplugged', () => {
+      for (const c of this.world.cables) if (c.route && (!c.ends[0] || !c.ends[1])) this.unroute(c);
+    });
   }
 
   /** 빈 칸이면 끼우고 장비를 돌려줌. id는 불러오기에서만 지정 (포트 id가 같아야 케이블을 다시 꽂음) */
@@ -111,9 +124,14 @@ export class Room {
   remove(device: Device, allowPdu = false): boolean {
     const i = this.devices.indexOf(device);
     if (i < 0 || (device.u === null && !allowPdu)) return false;
-    releaseDevice(this.world.cables, device.id);
+    // 매니저면 그 가이드를 지나던 선만 경로에서 빠짐
+    for (const c of this.world.cables) if (c.route?.guides.includes(device.id)) this.unroute(c);
     for (const port of device.ports) {
-      if (port.plugged) unplug(port.plugged.cable, port.plugged.end);
+      if (port.plugged) {
+        // 꽂힌 그 선을 먼저 경로에서 뺌 (id로 찾지 않음)
+        this.unroute(port.plugged.cable);
+        unplug(port.plugged.cable, port.plugged.end);
+      }
       if (this.hinted?.port === port) this.hinted = null;
       this.sockets.delete(port);
     }
@@ -146,15 +164,20 @@ export class Room {
     events.emit('device:power', { deviceId: device.id, on });
   }
 
-  /** 가동 판정 + LED + 공기 흐름. 매 틱과 배선·전원 이벤트마다 */
+  /** 가동 판정 + LED. 매 틱과 배선·전원 이벤트마다 */
   updatePower(now: number): PowerSummary {
-    this.airflow = airflowOf(blockedLength(this.world.cables, EXHAUST_ZONE));
     const links = new Map<string, string>();
     for (const c of this.world.cables) {
       const [a, b] = c.ends;
       if (!a || !b) continue;
       links.set(a.id, b.id);
       links.set(b.id, a.id);
+    }
+    // 정리 보상: 장비 포트에 꽂힌 선들의 정리 정도 평균만큼 전력이 줄어듦
+    for (const d of this.devices) {
+      const plugged = d.ports.flatMap((p) => (p.plugged ? [p.plugged.cable] : []));
+      const avg = plugged.length ? plugged.reduce((s, c) => s + tidyDegree(c.route), 0) / plugged.length : 0;
+      d.power.saving = TIDY_POWER_CUT * avg;
     }
     const wasTripped = new Set(this.devices.filter((d) => d.power.tripped));
     this.summary = updatePower(
@@ -179,9 +202,12 @@ export class Room {
   private addCable(kind: PortKind, saved?: SavedCable): Cable {
     const n = this.world.cables.length;
     const color = saved?.color ?? (kind === 'lan' ? LAN_COLORS[n % LAN_COLORS.length] : POWER_COLOR);
-    const c = createCable(saved?.id ?? `cable-${n}`, kind, CABLE_DEFAULT_LENGTH, color);
+    // 저장된 id는 그대로 (옛 저장 포함), 번호는 그보다 뒤로
+    const num = saved && /^cable-(\d+)$/.exec(saved.id);
+    if (num) this.cableSerial = Math.max(this.cableSerial, Number(num[1]) + 1);
+    const c = createCable(saved?.id ?? `cable-${this.cableSerial++}`, kind, CABLE_DEFAULT_LENGTH, color);
     this.world.cables.push(c);
-    const m = new CableMesh(c, EXHAUST_ZONE);
+    const m = new CableMesh(c);
     this.scene.add(m.group);
     this.meshes.push(m);
     return c;
@@ -201,18 +227,122 @@ export class Room {
     return c;
   }
 
-  /** 케이블을 없앰 (판매): 뽑고 벨크로를 풀고 메시를 걷어냄 */
+  /** 케이블을 없앰 (판매): 뽑고 메시를 걷어냄 */
   removeCable(cable: Cable): void {
     const i = this.world.cables.indexOf(cable);
     if (i < 0) return;
+    this.unroute(cable);
     for (const end of [0, 1] as const) unplug(cable, end);
-    for (const t of [...cable.ties]) untie(cable, t);
     this.world.cables.splice(i, 1);
     const k = this.meshes.findIndex((m) => m.cable === cable);
     if (k >= 0) {
       this.scene.remove(this.meshes[k].group);
       this.meshes[k].dispose();
       this.meshes.splice(k, 1);
+    }
+  }
+
+  /** 설치된 매니저들의 가이드 */
+  guides(): Guide[] {
+    return this.devices.flatMap((d) => guideOf(d) ?? []);
+  }
+
+  /** 선을 가이드에 올림: 양 끝이 꽂혀 있으면 그 가이드를 포함하는 경로를 찾아 깖 (묶음은 비움) */
+  routeCable(cable: Cable, guideId: string): boolean {
+    const [a, b] = cable.ends;
+    if (!a || !b) return false;
+    const seq = findRoute(a, b, this.guides(), guideId);
+    if (!seq) return false;
+    this.setRoute(cable, seq.map((g) => g.id), []);
+    events.emit('cable:routed', { cableId: cable.id });
+    return true;
+  }
+
+  /** 저장·옮기기 복원용: 그 가이드 순서 그대로 경로를 깖 (길이 검사 없음) */
+  routeWith(cable: Cable, guideIds: readonly string[], tied: readonly string[]): boolean {
+    if (!cable.ends[0] || !cable.ends[1] || guideIds.length === 0) return false;
+    const have = new Set(this.guides().map((g) => g.id));
+    if (!guideIds.every((id) => have.has(id))) return false;
+    this.setRoute(cable, [...guideIds], [...tied]);
+    return true;
+  }
+
+  private setRoute(cable: Cable, guides: string[], tied: string[]): void {
+    const touched = new Set([...(cable.route?.guides ?? []), ...guides]);
+    cable.route = { guides, tied };
+    for (const id of touched) this.relayout(id);
+  }
+
+  /** 경로에서 뺌: 지금 마디 자리에서 다시 물리로 (경로가 2m보다 길었으면 제약이 당겨 줄임) */
+  unroute(cable: Cable): void {
+    const route = cable.route;
+    if (!route) return;
+    cable.route = null;
+    cable.shape = null;
+    cable.rope.frozen = false;
+    cable.rope.wake();
+    for (const id of route.guides) this.relayout(id);
+    events.emit('cable:unrouted', { cableId: cable.id });
+  }
+
+  /** 가이드 한 구간을 묶음: 그 가이드를 지나면서 아직 안 묶인 선들을 묶고 돌려줌 */
+  tieGuide(guideId: string): Cable[] {
+    const tied = this.world.cables.filter((c) => c.route?.guides.includes(guideId) && !c.route.tied.includes(guideId));
+    if (tied.length === 0) return tied;
+    for (const c of tied) c.route!.tied.push(guideId);
+    this.relayout(guideId);
+    events.emit('cable:tied', { guideId, cableIds: tied.map((c) => c.id) });
+    return tied;
+  }
+
+  /**
+   * 그 가이드의 차선 (지나는 경로 선마다 오프셋). 가이드 하나에 격자 하나: 간격은 그 가이드에서 가장 굵은 선 기준.
+   * 묶인 선이 앞 차선, 안 묶인 선이 그 뒤. 각 무리 안은 laneOrder — 선이 드나드는 쪽과 따라가는 길이로 서로 안 가로지르게.
+   * tight = 안 묶인 선의 tight (묶인 선은 늘 1)
+   */
+  laneMap(guideId: string, tight = 0): Map<Cable, LaneOffset> {
+    const byId = new Map(this.guides().map((g) => [g.id, g]));
+    const passing = this.world.cables.filter(
+      (c) => c.route?.guides.includes(guideId) && c.ends[0] && c.ends[1] && c.route.guides.every((id) => byId.has(id)),
+    );
+    const sorted = (cs: Cable[]): Cable[] => {
+      const keys = cs.map((c) => {
+        const seq = c.route!.guides.map((id) => byId.get(id)!);
+        return laneKey(routeLayout(c.ends[0]!, c.ends[1]!, seq), c.route!.guides.indexOf(guideId), byId.get(guideId)!);
+      });
+      return laneOrder(keys).map((i) => cs[i]!);
+    };
+    const tied = sorted(passing.filter((c) => c.route!.tied.includes(guideId)));
+    const untied = sorted(passing.filter((c) => !c.route!.tied.includes(guideId)));
+    const maxRadius = Math.max(0, ...passing.map((c) => c.rope.cfg.radius));
+    const offsets = laneOffsets(passing.length, tied.length, tight, maxRadius);
+    return new Map([...tied, ...untied].map((c, k) => [c, offsets[k]!]));
+  }
+
+  /**
+   * 그 가이드(없으면 모든 가이드)를 지나는 경로 선들의 마디를 다시 깖. 차선은 laneMap.
+   * tight: 가이드 id → 0..1 — 그 가이드에서 아직 안 묶인 선에만 적용 (묶는 연출). 이미 묶인 선은 늘 1, 그 밖엔 0
+   */
+  relayout(guideId?: string, tight?: ReadonlyMap<string, number>): void {
+    const byId = new Map(this.guides().map((g) => [g.id, g]));
+    const lanesOn = new Map<string, Map<Cable, LaneOffset>>();
+    const lanesOf = (id: string) => {
+      let m = lanesOn.get(id);
+      if (!m) lanesOn.set(id, (m = this.laneMap(id, tight?.get(id) ?? 0)));
+      return m;
+    };
+    for (const c of this.world.cables) {
+      const route = c.route;
+      const [a, b] = c.ends;
+      if (!route || !a || !b || (guideId !== undefined && !route.guides.includes(guideId))) continue;
+      const seq = route.guides.map((id) => byId.get(id));
+      if (seq.some((g) => !g)) continue;
+      const tights = route.guides.map((id) => (route.tied.includes(id) ? 1 : tight?.get(id) ?? 0));
+      const lanes: LaneOffset[] = route.guides.map((id) => lanesOf(id).get(c)!);
+      const layout = smoothLayout(routeLayout(a, b, seq as Guide[], lanes));
+      const shape = wobble(layout, tights);
+      c.shape = Float32Array.from(shape.flat());
+      c.rope.setPath(shape);
     }
   }
 
@@ -243,8 +373,8 @@ export class Room {
         id: c.id, kind: c.kind, color: c.color,
         ends: [c.ends[0]?.id ?? null, c.ends[1]?.id ?? null],
         nodes: Array.from(c.rope.pos, round3),
-        ...(c.ties.length ? { ties: c.ties.map((t) => ({ node: t.node, pos: t.pos.map(round3) as [number, number, number], ...(t.hook ? { hook: t.hook } : {}) })) } : {}),
         ...(c.paid ? { paid: c.paid } : {}),
+        ...(c.route ? { route: { guides: [...c.route.guides], tied: [...c.route.tied] } } : {}),
       }));
     return { serial: this.serial, spawned: this.spawned, devices, cables };
   }
@@ -276,8 +406,8 @@ export class Room {
         const port = id === null ? undefined : portById.get(id);
         if (port) plug(c, end as 0 | 1, port);
       });
-      // 고리에 건 것은 그 매니저가 다시 끼워졌을 때만
-      for (const t of saved.ties ?? []) if (!t.hook || this.device(deviceOfHook(t.hook))) restoreTie(c, t);
+      // 가이드가 없거나 끝이 빠졌으면 저장된 마디 그대로 늘어진 로프
+      if (saved.route) this.routeWith(c, saved.route.guides, saved.route.tied);
     }
     this.serial = Math.max(this.serial, data.serial);
     this.spawned = data.spawned;
@@ -307,7 +437,7 @@ export class Room {
 
   /** 메시 갱신 + 빈 포트 깜빡임 */
   sync(timeSec: number): void {
-    for (const m of this.meshes) m.update(timeSec);
+    for (const m of this.meshes) m.update();
     const k = 0.25 + 0.25 * Math.sin(timeSec * 5);
     for (const s of this.sockets.values()) {
       if (s === this.hinted) continue;
@@ -316,6 +446,29 @@ export class Room {
       else e.setHex(0x000000);
     }
   }
+}
+
+/**
+ * 경로 모양을 SHAPE_STEP 간격으로 촘촘히 깔고, 묶이지 않은 가이드 구간은 z로 사인 모양 흔듦 (진폭 WOBBLE × (1 - tight)).
+ * layout = 둥글게 한 routeLayout 꺾은선과 가이드 구간 인덱스
+ */
+function wobble({ pts, spans }: RouteLayout, tights: readonly number[]): Vec3[] {
+  const cum = [0];
+  for (let i = 1; i < pts.length; i++) cum.push(cum[i - 1] + polylineLength([pts[i - 1], pts[i]]));
+  const total = cum[cum.length - 1];
+  const m = Math.max(2, Math.ceil(total / SHAPE_STEP) + 1);
+  const out = resample(pts, m);
+  tights.forEach((t, k) => {
+    const amp = WOBBLE * (1 - t);
+    if (amp <= 0) return;
+    const s0 = cum[spans[k]![0]], s1 = cum[spans[k]![1]];
+    for (let i = 0; i < m; i++) {
+      const d = (total * i) / (m - 1);
+      if (d <= s0 || d >= s1) continue;
+      out[i]![2] += amp * Math.sin((2 * Math.PI * (d - s0)) / WOBBLE_PERIOD);
+    }
+  });
+  return out;
 }
 
 function removeWhere<T>(arr: T[], drop: (x: T) => boolean): void {
