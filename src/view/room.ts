@@ -47,6 +47,8 @@ export class Room {
   private readonly boxes = new Map<Device, Aabb[]>();
   private hinted: Socket | null = null;
   private serial = 0;
+  /** 케이블 id 번호 — 팔아도 되돌리지 않아 id가 겹치지 않음 (불러오면 저장된 id의 가장 큰 번호 다음부터) */
+  private cableSerial = 0;
   private spawned = 0;
   private stressCables: Cable[] = [];
   private readonly rng = createRng(42);
@@ -63,10 +65,10 @@ export class Room {
     readonly rack: THREE.Group,
   ) {
     this.world.colliders.push(...collectColliders(rack));
-    // 한쪽이라도 뽑히면 경로에서 빠짐 (버스는 전역 — 이 방의 그 선이 실제로 빠졌을 때만)
-    events.on('cable:unplugged', ({ cableId }) => {
-      const c = this.world.cables.find((x) => x.id === cableId);
-      if (c?.route && (!c.ends[0] || !c.ends[1])) this.unroute(c);
+    // 어디서든 커넥터가 뽑히면 경로에서 빠짐. 버스는 전역이고 id만 오므로 id로 찾지 않고,
+    // 이 방의 선 중 경로에 든 채 끝이 빠진 선(그 객체)을 푼다 (장비 빼기·판매는 Cable 객체로 직접 푼다)
+    events.on('cable:unplugged', () => {
+      for (const c of this.world.cables) if (c.route && (!c.ends[0] || !c.ends[1])) this.unroute(c);
     });
   }
 
@@ -123,7 +125,11 @@ export class Room {
     // 매니저면 그 가이드를 지나던 선만 경로에서 빠짐
     for (const c of this.world.cables) if (c.route?.guides.includes(device.id)) this.unroute(c);
     for (const port of device.ports) {
-      if (port.plugged) unplug(port.plugged.cable, port.plugged.end);
+      if (port.plugged) {
+        // 꽂힌 그 선을 먼저 경로에서 뺌 (id로 찾지 않음)
+        this.unroute(port.plugged.cable);
+        unplug(port.plugged.cable, port.plugged.end);
+      }
       if (this.hinted?.port === port) this.hinted = null;
       this.sockets.delete(port);
     }
@@ -194,7 +200,10 @@ export class Room {
   private addCable(kind: PortKind, saved?: SavedCable): Cable {
     const n = this.world.cables.length;
     const color = saved?.color ?? (kind === 'lan' ? LAN_COLORS[n % LAN_COLORS.length] : POWER_COLOR);
-    const c = createCable(saved?.id ?? `cable-${n}`, kind, CABLE_DEFAULT_LENGTH, color);
+    // 저장된 id는 그대로 (옛 저장 포함), 번호는 그보다 뒤로
+    const num = saved && /^cable-(\d+)$/.exec(saved.id);
+    if (num) this.cableSerial = Math.max(this.cableSerial, Number(num[1]) + 1);
+    const c = createCable(saved?.id ?? `cable-${this.cableSerial++}`, kind, CABLE_DEFAULT_LENGTH, color);
     this.world.cables.push(c);
     const m = new CableMesh(c);
     this.scene.add(m.group);

@@ -170,6 +170,38 @@ describe('경로에 넣기·묶기·풀기', () => {
     expect(c.route).toBeNull();
   });
 
+  it('케이블 id는 팔고 새로 사도, 불러온 뒤에도 겹치지 않음', () => {
+    const room = newRoom();
+    room.removeCable(room.world.cables[0]!);
+    room.spawnCable('lan');
+    const ids = room.world.cables.map((c) => c.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    const data = parseSave(JSON.stringify({ v: SAVE_VERSION, money: 0, bought: {}, ...room.snapshot() }))!;
+    const back = restoreRoom(new THREE.Scene(), new THREE.Group(), data);
+    expect(back.world.cables.map((c) => c.id)).toEqual(ids); // 불러온 id는 그대로
+    back.spawnCable('power');
+    const after = back.world.cables.map((c) => c.id);
+    expect(new Set(after).size).toBe(after.length);
+  });
+
+  it('장비를 빼면 그 장비에 꽂힌 경로 선이 풀림 (같은 id 선이 있어도)', () => {
+    const { room, g } = roomWithGuide();
+    const [, , lan] = room.world.cables as [Cable, Cable, Cable];
+    // 시작 선 하나를 팔고 새로 사서, 옛 규칙이면 id가 겹치는 선을 만든다
+    room.removeCable(room.world.cables[0]!);
+    const fresh = room.spawnCable('lan');
+    const [a, b] = lan.ends as [NonNullable<Cable['ends'][0]>, NonNullable<Cable['ends'][1]>];
+    unplug(lan, 0);
+    unplug(lan, 1);
+    expect(plug(fresh, 0, a)).toBe(true);
+    expect(plug(fresh, 1, b)).toBe(true);
+    expect(room.routeCable(fresh, g.id)).toBe(true);
+    const entry = room.devices.find((d) => d.def.id === 'server-entry')!;
+    expect(room.remove(entry)).toBe(true);
+    expect(fresh.route).toBeNull();
+    expect(fresh.rope.frozen).toBe(false);
+  });
+
   it('케이블을 없애도 경로에서 빠짐', () => {
     const { room, g } = roomWithGuide();
     const [c0, c1] = room.world.cables as [Cable, Cable];
