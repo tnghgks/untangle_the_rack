@@ -162,4 +162,41 @@ describe('랙 사이 트레이 경로', () => {
       expect(c.ends[1]).toBe(port);
     }
   });
+
+  it('랙이 안 맞는 경로는 거절: 같은 랙 경로를 랙 사이에, 트레이 경로를 같은 랙에', () => {
+    // (a) 같은 랙 매니저 경로 → 스위치가 다른 랙으로 옮겨짐
+    {
+      const room = createStartRoom(new THREE.Scene());
+      const h = room.install('cable-manager', 5)!;
+      const c = room.world.cables[2]!; // 시작 랜선 (스위치 ↔ 서버, 2m)
+      expect(room.routeCable(c, h.id)).toBe(true);
+      const route = { guides: [...c.route!.guides], tied: [...c.route!.tied] };
+      const sw = firstSwitch(room);
+      const end: CableEnd = sw.ports.includes(c.ends[0]!) ? 0 : 1;
+      const portId = c.ends[end]!.id;
+      room.remove(sw);
+      const r2 = room.addRack([4, 0])!;
+      const moved = room.install('switch-8', 1, r2.id, sw.id)!;
+      const port = moved.ports.find((p) => p.id === portId)!;
+      expect(plug(c, end, port)).toBe(true);
+      expect(room.routeFits(c, route.guides)).toBe(false);
+      expect(room.routeWith(c, route.guides, route.tied)).toBe(false);
+      expect(c.route).toBeNull();
+    }
+    // (b) 트레이 경로 → 두 끝이 같은 랙이 됨
+    {
+      const { room, sw1, sw2 } = twoRacks([1, 0]);
+      const c = cableBetween(room, freeLan(sw1), freeLan(sw2));
+      expect(room.routeCable(c, 'rack-1:tray')).toBe(true);
+      const route = { guides: [...c.route!.guides], tied: [...c.route!.tied] };
+      const portId = c.ends[1]!.id;
+      room.remove(sw2);
+      const back = room.install('switch-24', 8, 'rack-1', sw2.id)!;
+      const port = back.ports.find((p) => p.id === portId)!;
+      expect(plug(c, 1, port)).toBe(true);
+      expect(room.routeFits(c, route.guides)).toBe(false);
+      expect(room.routeWith(c, route.guides, route.tied)).toBe(false);
+      expect(c.route).toBeNull();
+    }
+  });
 });

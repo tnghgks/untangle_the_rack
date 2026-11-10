@@ -341,12 +341,21 @@ export class Room {
     return end === 0 ? this.seqFits(cable, port, other, route.guides) : this.seqFits(cable, other, port, route.guides);
   }
 
-  /** a → b를 그 가이드 순서로: 가이드가 다 있고, 트레이가 있으면 실제 선 모양 길이 × REACH_SLACK ≤ 선 길이 */
+  /**
+   * a → b를 그 가이드 순서로: 가이드가 다 있고, 두 포트의 랙에 맞고(같은 랙이면 그 랙의 트레이 아닌 가이드만,
+   * 다른 랙이면 양쪽 트레이 포함), 트레이가 있으면 실제 선 모양 길이 × REACH_SLACK ≤ 선 길이.
+   * 같은 랙 안 경로는 직선으로 안 닿아도 받아들임 (옮기기 복원 판정)
+   */
   private seqFits(cable: Cable, a: Port, b: Port, guideIds: readonly string[]): boolean {
     const byId = new Map(this.guides().map((g) => [g.id, g]));
     const seq = guideIds.map((id) => byId.get(id));
     if (seq.some((g) => !g)) return false;
     const gs = seq as Guide[];
+    if (a.rack === b.rack) {
+      if (gs.some((g) => g.rack !== a.rack || g.tray)) return false;
+    } else if (!gs.some((g) => g.tray && g.rack === a.rack) || !gs.some((g) => g.tray && g.rack === b.rack)) {
+      return false;
+    }
     return !hasTray(gs) || pathLength(routePath(a, b, gs)) * REACH_SLACK <= cable.rope.length;
   }
 
