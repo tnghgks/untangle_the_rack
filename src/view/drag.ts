@@ -6,7 +6,8 @@ import { MAGNET_RADIUS, SNAP_RADIUS, magnetize, nearestPortOnRay, plug, unplug, 
 import { pickCable } from './pick';
 
 // 케이블 잡기·끌기. 잡은 점은 카메라를 바라보는 평면 위에서 움직이고, 휠로 그 평면을 앞뒤로 민다.
-// 꽂힌 커넥터는 직접 잡고 UNPLUG_PX 넘게 끌어야 뽑힌다 (클릭만으론 안 뽑힘, 10-25). 케이블 가운데를 아무리 당겨도
+// 꽂힌 커넥터는 직접 잡고 UNPLUG_PX 넘게 끌어야 뽑힌다 (클릭만으론 안 뽑힘, 10-25). 경로에 든 선도 같은 문턱을 넘어야
+// 경로에서 빠진다 (클릭만으론 경로·묶음이 그대로). 케이블 가운데를 아무리 당겨도
 // 포트는 안 빠지고 손이 닿는 거리에서 멈춘다. 가운데를 끌어 케이블 매니저 위에 놓으면 경로에 든다 (guide.ts).
 // 들고 다니기(carry): 상점에서 산 케이블의 한쪽 끝이 버튼을 안 눌러도 커서를 따라오고, 포트 위에서 클릭하면 꽂힌다.
 
@@ -25,7 +26,7 @@ export interface CableDragDeps {
   enabled(): boolean;
   /** 끄는 커넥터 근처의 포트 표시 (null = 끔) */
   showPortHint(hit: PortHit | null): void;
-  /** 잡는 순간 (rope.grab 전) — 경로에 든 선이면 main이 경로에서 빼서 다시 끌 수 있게 */
+  /** 잡는 순간 (rope.grab 전, 꽂힌 커넥터·경로 선은 UNPLUG_PX 넘게 끈 뒤) — 경로에 든 선이면 main이 경로에서 빼서 다시 끌 수 있게 */
   onGrab?(cable: Cable): void;
   /** 커넥터가 아닌 가운데를 끌다 놓음 (커서 광선). true = 처리됨 (가이드에 올림) */
   onRelease?(cable: Cable, ray: THREE.Ray): boolean;
@@ -43,9 +44,11 @@ export interface CableDrag {
 interface Drag {
   cable: Cable;
   end: CableEnd | null;
+  /** 잡은 마디 */
+  node: number;
   pointerId: number;
   hit: PortHit | null;
-  /** 꽂힌 커넥터를 눌렀지만 아직 덜 끌었음 — 눌린 화면 위치 */
+  /** 꽂힌 커넥터나 경로에 든 선을 눌렀지만 아직 덜 끌었음 — 눌린 화면 위치 */
   pending: { x: number; y: number } | null;
 }
 
@@ -106,7 +109,7 @@ export function createCableDrag({ canvas, camera, controls, world, enabled, show
     cable.rope.release();
     if (commit && end !== null && hit?.ok && hit.dist <= SNAP_RADIUS) plug(cable, end, hit.port);
     // 가운데를 놓은 곳이 가이드 위면 경로에 올림 (아니면 그 자리에서 다시 물리로)
-    if (commit && end === null) onRelease?.(cable, castAt(lastX, lastY));
+    if (commit && end === null && !drag.pending) onRelease?.(cable, castAt(lastX, lastY));
     if (drag.pointerId !== CARRY && canvas.hasPointerCapture(drag.pointerId)) canvas.releasePointerCapture(drag.pointerId);
     showPortHint(null);
     drag = null;
@@ -153,13 +156,14 @@ export function createCableDrag({ canvas, camera, controls, world, enabled, show
       const { cable } = pick;
       const node = pick.end !== null ? endNode(cable, pick.end) : pick.node;
       startPlane(cable, node);
-      // 꽂힌 커넥터는 끌기 시작할 때 뽑는다 (pointermove)
+      // 꽂힌 커넥터는 끌기 시작할 때 뽑고, 경로에 든 선은 끌기 시작할 때 경로에서 뺀다 (pointermove)
       const plugged = pick.end !== null && cable.ends[pick.end] !== null;
-      if (!plugged) {
+      const wait = plugged || cable.route !== null;
+      if (!wait) {
         onGrab?.(cable);
         cable.rope.grab(node);
       }
-      drag = { cable, end: pick.end, pointerId: e.pointerId, hit: null, pending: plugged ? { x: e.clientX, y: e.clientY } : null };
+      drag = { cable, end: pick.end, node, pointerId: e.pointerId, hit: null, pending: wait ? { x: e.clientX, y: e.clientY } : null };
       lastX = e.clientX;
       lastY = e.clientY;
       canvas.style.cursor = 'grabbing';
@@ -172,12 +176,12 @@ export function createCableDrag({ canvas, camera, controls, world, enabled, show
     lastY = e.clientY;
     // 잡기 전 커서·강조는 hover.ts
     if (!drag || drag.pointerId === CARRY) return;
-    const { pending, cable, end } = drag;
-    if (pending && end !== null) {
+    const { pending, cable, end, node } = drag;
+    if (pending) {
       if (Math.hypot(e.clientX - pending.x, e.clientY - pending.y) < UNPLUG_PX) return;
       onGrab?.(cable);
-      unplug(cable, end);
-      cable.rope.grab(endNode(cable, end));
+      if (end !== null) unplug(cable, end);
+      cable.rope.grab(node);
       drag.pending = null;
     }
     updateTarget();
@@ -224,7 +228,7 @@ export function createCableDrag({ canvas, camera, controls, world, enabled, show
       const node = endNode(cable, end);
       startPlane(cable, node);
       cable.rope.grab(node);
-      drag = { cable, end, pointerId: CARRY, hit: null, pending: null };
+      drag = { cable, end, node, pointerId: CARRY, hit: null, pending: null };
       controls.enabled = true; // 들고 다니는 동안에도 카메라는 돌릴 수 있게
       updateTarget();
     },
