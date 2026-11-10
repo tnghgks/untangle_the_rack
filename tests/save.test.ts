@@ -157,6 +157,23 @@ describe('save v2: 랙 목록·긴 랜선', () => {
     expect(data.cables[1].route).toEqual({ guides: ['g'], tied: [] });
   });
 
+  it('랙이 하나도 없는 저장은 버림', () => {
+    const ok = toSave(startRoom());
+    expect(parseSave(JSON.stringify({ ...ok, racks: [] }))).toBeNull();
+  });
+
+  it('길이가 터무니없는 선은 그 길이만 버리고 기본 길이로', () => {
+    const snap = toSave(startRoom());
+    const bad = JSON.parse(JSON.stringify(snap));
+    bad.cables[0].length = 1e7;
+    bad.cables[1].length = 10;
+    const data = parseSave(JSON.stringify(bad))!;
+    expect(data).not.toBeNull();
+    expect(data.cables[0].length).toBeUndefined();
+    expect(data.cables[1].length).toBe(10);
+    expect(restoreRoom(new THREE.Scene(), data).world.cables[0].rope.length).toBeCloseTo(2, 3);
+  });
+
   it('상점 10m 랜선은 50원, 길이 10', () => {
     expect(CABLES['cable-lan-long']).toMatchObject({ price: 50, length: 10, kind: 'lan' });
     expect(CABLES['cable-lan'].length).toBe(2);

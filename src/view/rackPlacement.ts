@@ -106,7 +106,8 @@ export function createRackPlacement({ canvas, camera, scene, room, rig, place }:
       allowed = new Set(cells.map(key));
       marks = new THREE.Group();
       const tileGeo = new THREE.PlaneGeometry(CELL_X - MARGIN, CELL_Z - MARGIN).rotateX(-Math.PI / 2);
-      const tileMat = new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: 0.35, depthWrite: false });
+      // 칸·유령 상자는 안개를 안 받음 — 내려다보는 거리에선 장면 안개(8→18m)에 반쯤 묻힘
+      const tileMat = new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: 0.35, depthWrite: false, fog: false });
       for (const c of cells) {
         const o = cellOrigin(c);
         const m = new THREE.Mesh(tileGeo, tileMat);
@@ -116,7 +117,7 @@ export function createRackPlacement({ canvas, camera, scene, room, rig, place }:
       scene.add(marks);
       ghost = new THREE.Mesh(
         new THREE.BoxGeometry(0.6, RACK_HEIGHT, 1.0),
-        new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: 0.4, depthWrite: false }),
+        new THREE.MeshBasicMaterial({ color: GREEN, transparent: true, opacity: 0.4, depthWrite: false, fog: false }),
       );
       ghost.visible = false;
       scene.add(ghost);

@@ -352,13 +352,14 @@ export function pathLength(pts: readonly Vec3[]): number {
  * - 가로 가이드에 놓음: 두 끝이 다 가까우면 그것 하나. 아니면 세로 매니저(먼 끝 쪽에 가까운 것)를 거쳐
  *   먼 끝 가까이의 다른 가로 가이드까지 이어 줌. 세로 매니저가 없으면 그것 하나 (먼 끝은 랙 옆으로 늘어뜨림)
  * - 세로 가이드에 놓음: 양 끝 가까이의 가로 가이드가 있으면 앞뒤로 끼움 (없는 쪽은 늘어짐)
- * 다른 랙: crossRoute. 실제 선 모양 길이 × REACH_SLACK가 maxLen을 넘으면 null
+ * 다른 랙: crossRoute 후보 중 maxLen에 맞는 첫 경로. 실제 선 모양 길이 × REACH_SLACK가 maxLen을 넘으면 그 후보는 버림
  */
 export function findRoute(a: Port, b: Port, guides: readonly Guide[], dropped: string, maxLen = Infinity): Guide[] | null {
   if (a.rack !== b.rack) {
-    const seq = crossRoute(a, b, guides);
-    if (!seq || !seq.some((g) => g.id === dropped)) return null;
-    return pathLength(routePath(a, b, seq)) * REACH_SLACK > maxLen ? null : seq;
+    for (const seq of crossRoutes(a, b, guides, dropped)) {
+      if (pathLength(routePath(a, b, seq)) * REACH_SLACK <= maxLen) return seq;
+    }
+    return null;
   }
   const own = guides.filter((g) => g.rack === a.rack && !g.tray);
   const drop = own.find((g) => g.id === dropped);
@@ -393,12 +394,13 @@ function nearestHOf(p: Port, guides: readonly Guide[], not?: Guide): Guide | nul
 /**
  * 다른 랙 사이 경로: [hA, vA, a 랙 트레이, (같은 줄이면) 사이 랙 트레이들(x 순), b 랙 트레이, vB, hB] 중 있는 것.
  * h = 그 랙 가로 매니저 중 포트에서 NEAR 안 가장 가까운 것, v = 그 랙 세로 매니저 중 상대 랙 쪽 옆(없으면 반대쪽).
- * 두 랙 중 한쪽 트레이가 없으면 null
+ * 후보 순서: 다 있는 것 → 세로 매니저(vA·vB) 뺀 것 → 가로 매니저(hA·hB)까지 뺀 것. 놓은 가이드(dropped)는 늘 남김
+ * (먼 쪽 세로 매니저를 타면 초록 칸에서도 길이를 넘을 수 있어서). 두 랙 중 한쪽 트레이가 없거나 dropped가 경로에 없으면 빈 목록
  */
-function crossRoute(a: Port, b: Port, guides: readonly Guide[]): Guide[] | null {
+function crossRoutes(a: Port, b: Port, guides: readonly Guide[], dropped: string): Guide[][] {
   const trayOf = (rack: string) => guides.find((g) => g.tray && g.rack === rack);
   const tA = trayOf(a.rack), tB = trayOf(b.rack);
-  if (!tA || !tB) return null;
+  if (!tA || !tB) return [];
   const ends = (p: Port, tray: Guide, other: Guide): (Guide | null)[] => {
     const own = guides.filter((g) => g.rack === p.rack && !g.tray);
     const side = towardSide(tray.origin, other.origin, p);
@@ -414,7 +416,14 @@ function crossRoute(a: Port, b: Port, guides: readonly Guide[]): Guide[] | null 
         .filter((g) => g.tray && g !== tA && g !== tB && g.origin[2] === tA.origin[2] && g.origin[0] > Math.min(xa, xb) && g.origin[0] < Math.max(xa, xb))
         .sort((g, h) => (xb > xa ? g.origin[0] - h.origin[0] : h.origin[0] - g.origin[0]))
     : [];
-  return [hA, vA, tA, ...between, tB, vB, hB].filter((g): g is Guide => !!g);
+  const full = [hA, vA, tA, ...between, tB, vB, hB].filter((g): g is Guide => !!g);
+  if (!full.some((g) => g.id === dropped)) return [];
+  const without = (seq: Guide[], xs: (Guide | null)[]) => seq.filter((g) => g.id === dropped || !xs.includes(g));
+  const noV = without(full, [vA, vB]);
+  const noVH = without(noV, [hA, hB]);
+  const out = [full];
+  for (const s of [noV, noVH]) if (s.length < out[out.length - 1]!.length) out.push(s);
+  return out;
 }
 
 /** 한 가이드를 지나는 선 하나의 모양 (차선 순서용) */

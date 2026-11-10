@@ -15,7 +15,7 @@ import { createTieTool } from './view/tie';
 import { plug } from './cable/plug';
 import { createPlacement, type MovingDevice } from './rack/placement';
 import type { Device } from './rack/device';
-import { aisleAt } from './rack/floor';
+import { aisleAt, reachableCells } from './rack/floor';
 import { CABLES, DEVICES, isSideDef, RACK_DEF, START_MONEY, type DeviceDefId } from './data/catalog';
 import { events, type ToolId } from './core/events';
 import { createHud } from './ui/hud';
@@ -87,11 +87,14 @@ const rackPlacement = createRackPlacement({
   room,
   rig,
   place(cell) {
-    if (!spend(state, rackPrice())) return flashHint('돈이 모자라요');
-    state.bought.rack = boughtCount(state, 'rack') + 1;
+    // 세울 수 있는지 먼저 보고 돈을 냄 (세우지 못하면 돈을 잃지 않게)
+    if (state.money < rackPrice()) return flashHint('돈이 모자라요');
     const rack = room.addRack(cell);
+    if (!rack) return flashHint('그 칸엔 랙을 세울 수 없어요');
+    spend(state, rackPrice());
+    state.bought.rack = boughtCount(state, 'rack') + 1;
     // 자리 고르기가 먼저 끝나(leaveOverview) 돌아가는 중 → focus가 그 이동의 도착 자리를 새 랙 기준으로 바꿈
-    if (rack) selectRack(rack.id);
+    selectRack(rack.id);
     shop.refresh();
     flashHint('랙을 세웠어요 · 스위치·PDU를 달고, 스위치를 인터넷에 닿은 랙 스위치에 랜선 10m로 이으세요');
   },
@@ -245,7 +248,7 @@ const inspector = createInspector({
     placement.hold(device.def.id, moving);
   },
 });
-// 랙 프레임·트레이 클릭 → 그 랙을 고름 (장비 클릭은 위 정보 카드만). 정보 카드 다음에 등록
+// 랙 프레임·트레이 클릭 → 그 랙을 고름. 다른 랙 장비 클릭도 그 랙을 고름 (정보 카드는 그대로 뜸). 정보 카드 다음에 등록
 createRackSelect({
   canvas,
   camera: stage.camera,
@@ -293,11 +296,13 @@ const shop = createShop(hud.shopPanel, {
   cableBlocked: (id) => (state.money < CABLES[id].price ? '돈 부족' : null),
   priceOf: price,
   rackPrice,
-  rackBlocked: () => (rackPlacement.active || state.money >= rackPrice() ? null : '돈 부족'),
+  // 자리 고르는 중엔 취소 버튼이라 막지 않음. 초록 칸이 하나도 없으면 시작해도 고를 게 없음
+  rackBlocked: () =>
+    rackPlacement.active ? null : reachableCells(room.racks).length === 0 ? '놓을 자리 없음' : state.money < rackPrice() ? '돈 부족' : null,
   placingRack: () => rackPlacement.active,
   onBuyRack: () => {
     if (rackPlacement.active) return rackPlacement.cancel();
-    if (state.money < rackPrice()) return;
+    if (state.money < rackPrice() || reachableCells(room.racks).length === 0) return;
     if (placement.held) return flashHint('들고 있는 장비를 먼저 내려놓으세요');
     if (cableDrag.held()) return flashHint('들고 있는 케이블을 먼저 내려놓으세요');
     rackPlacement.start();

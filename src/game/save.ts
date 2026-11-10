@@ -10,6 +10,9 @@ export const SAVE_KEY = 'untangle_the_rack.save';
 /** 2: 랙 목록(racks)·장비의 rack·케이블 length. 1은 읽을 때 위로 올림 */
 export const SAVE_VERSION = 2;
 
+/** 저장된 케이블 길이(m) 상한. 넘으면 그 선의 length만 버림 (깨진 값으로 거대한 로프를 만들지 않게) */
+export const SAVE_MAX_CABLE_LENGTH = 50;
+
 /** 세운 랙 하나: id와 바닥 칸 */
 export type SavedRack = RackPlace;
 
@@ -90,9 +93,10 @@ function upgradeV1(s: Record<string, unknown>): Record<string, unknown> {
   return { ...s, v: SAVE_VERSION, racks: [{ id: 'rack-1', cell: [0, 0] }], devices, cables };
 }
 
-/** 선 하나의 route·ties 형식이 틀리면 그 선에서만 지운다 (선은 그대로 불러옴) */
+/** 선 하나의 route·ties·length가 틀리면 그 선에서만 지운다 (선은 그대로 불러옴, length는 기본 길이로) */
 function sanitize(d: SaveData): SaveData {
   for (const c of d.cables) {
+    if (c.length !== undefined && c.length > SAVE_MAX_CABLE_LENGTH) delete c.length;
     if (c.route !== undefined && !routeOk(c.route)) delete c.route;
     if (c.ties !== undefined && !(Array.isArray(c.ties) && c.ties.every(tieOk))) delete c.ties;
   }
@@ -117,7 +121,7 @@ function isSave(d: unknown): d is SaveData {
   const s = d as Record<string, unknown>;
   if (s.v !== SAVE_VERSION || !num(s.money) || !num(s.serial) || !num(s.spawned)) return false;
   if (typeof s.bought !== 'object' || s.bought === null) return false;
-  if (!Array.isArray(s.devices) || !Array.isArray(s.cables) || !Array.isArray(s.racks)) return false;
+  if (!Array.isArray(s.devices) || !Array.isArray(s.cables) || !Array.isArray(s.racks) || s.racks.length === 0) return false;
   const rackOk = s.racks.every((x: SavedRack) =>
     typeof x?.id === 'string' && Array.isArray(x.cell) && x.cell.length === 2 && x.cell.every((v) => Number.isInteger(v)));
   const devOk = s.devices.every((x: SavedDevice) =>

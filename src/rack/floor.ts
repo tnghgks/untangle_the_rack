@@ -59,7 +59,13 @@ export { LONG_LAN_LENGTH };
 const CLIMB = TRAY_Y - (uBottomY(1) + U / 2);
 /** 24포트 스위치 맨 끝 포트(x −0.2) → 반대쪽 랙 옆 */
 const SIDE_RUN = SIDE_RING_X + 0.2;
-/** 늘어뜨림·처짐·둥근 꺾임 여유 (Task 4 보증 테스트가 실제 경로보다 큼을 확인) */
+/**
+ * 늘어뜨림·처짐·둥근 꺾임 여유. 어림값이라 모든 포트 쌍의 실제 경로보다 늘 크지는 않음 —
+ * 매니저 없이 (0,±2) 칸에선 어떤 포트 쌍은 실제 9.673m > worstUplinkLength 9.569m.
+ * 그 칸은 칸 판정(worst × REACH_SLACK = 9.76m ≤ 10)에 남는 여유 덕에 닿을 뿐 (9.673 × REACH_SLACK = 9.87m ≤ 10).
+ * 먼 쪽 세로 매니저 때문에 넘치면 findRoute가 매니저를 빼고 다시 맞춤.
+ * 보증 테스트(uplinkRoute.test.ts '초록 칸 가장자리')는 먼 끝 포트 쌍만 확인
+ */
 const SAG_ALLOW = 0.4;
 
 /** 두 칸의 랙을 잇는 케이블의 최악 경로 길이 */

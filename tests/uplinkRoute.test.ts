@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import type { Cable, CableEnd, Port } from '../src/cable/cable';
 import type { Guide } from '../src/cable/guide';
 import { plug } from '../src/cable/plug';
-import { findRoute, pathLength, routePath } from '../src/cable/route';
+import { findRoute, pathLength, REACH_SLACK, routePath } from '../src/cable/route';
 import { RACK_HEIGHT } from '../src/data/units';
 import type { Device } from '../src/rack/device';
 import { cellOrigin, reachableCells, TRAY_Y, worstUplinkLength, type Cell } from '../src/rack/floor';
@@ -124,6 +124,32 @@ describe('랙 사이 트레이 경로', () => {
       const len = realLength(room, c);
       expect(len, `칸 ${cell}`).toBeLessThanOrEqual(worstUplinkLength(origin, cell));
     }
+  });
+
+  it('먼 쪽 세로 매니저로 10m를 넘으면 매니저를 빼고라도 초록 칸엔 닿음', () => {
+    const room = createStartRoom(new THREE.Scene());
+    room.remove(firstSwitch(room));
+    const sw1 = room.install('switch-24', 1)!;
+    const r2 = room.addRack([4, 0])!;
+    const sw2 = room.install('switch-24', 1, r2.id)!;
+    // 세로 매니저는 상대 랙에서 먼 쪽에만, 가로 매니저는 두 스위치 바로 위
+    const vA = room.addSide('cable-manager-v', 'rack-1', 0)!;
+    const vB = room.addSide('cable-manager-v', r2.id, 1)!;
+    const hA = room.install('cable-manager', 2)!;
+    const hB = room.install('cable-manager', 2, r2.id)!;
+    // 둘 다 자기 세로 매니저에서 먼 쪽 끝 포트 (a는 오른쪽, b는 왼쪽): 매니저까지 갔다가 트레이로 되돌아옴
+    const port = (d: Device, n: number) => d.ports.find((p) => p.id === `${d.id}:lan${n}`)!;
+    const a = port(sw1, 23), b = port(sw2, 12);
+    const full = seqOf(room, [hA.id, vA.id, 'rack-1:tray', 'rack-2:tray', vB.id, hB.id]);
+    expect(pathLength(routePath(a, b, full)) * REACH_SLACK).toBeGreaterThan(10); // 매니저를 다 타면 못 닿음
+    const c = cableBetween(room, a, b);
+    expect(room.routeCable(c, 'rack-1:tray')).toBe(true);
+    expect(c.route!.guides).toContain('rack-1:tray');
+    expect(realLength(room, c) * REACH_SLACK).toBeLessThanOrEqual(10);
+    // 놓은 가이드가 세로 매니저면 그건 남기고 맞춤
+    const c2 = cableBetween(room, port(sw1, 11), port(sw2, 0));
+    expect(room.routeCable(c2, vA.id)).toBe(true);
+    expect(c2.route!.guides).toContain(vA.id);
   });
 
   it('옮긴 뒤 트레이 경로가 길이를 넘으면 경로만 풀림', () => {

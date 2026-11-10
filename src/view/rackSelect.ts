@@ -2,7 +2,8 @@ import * as THREE from 'three';
 import type { Room } from './room';
 
 // 랙 고르기: 랙 프레임·트레이를 클릭(끌지 않고)하면 그 랙을 고른다 → main이 카메라를 그 랙으로 옮김.
-// 장비 클릭은 지금처럼 정보 카드만 (카메라 안 움직임) — 광선에 처음 맞은 게 장비면 고르지 않는다.
+// 장비가 꽉 찬 랙은 프레임이 거의 안 보이므로, 다른 랙의 장비를 클릭해도 그 랙을 고른다 (정보 카드도 그대로 뜸).
+// 지금 고른 랙의 장비 클릭은 지금처럼 정보 카드만 (카메라 안 움직임).
 // 앞 단계(케이블 잡기·전원 버튼·장비 들기 등)가 받은 클릭(preventDefault)은 건드리지 않는다. 등록은 정보 카드 다음.
 
 const CLICK_PX = 6;
@@ -23,14 +24,14 @@ export function createRackSelect({ canvas, camera, room, busy, selected, select 
   const ndc = new THREE.Vector2();
   let down: { x: number; y: number; id: number } | null = null;
 
-  /** 커서 아래 처음 맞은 물체가 랙 메시(프레임·트레이)면 그 랙 id, 장비거나 없으면 null */
+  /** 커서 아래 처음 맞은 물체가 속한 랙 id: 랙 메시(프레임·트레이)면 그 랙, 장비면 장비가 달린 랙. 없으면 null */
   const pickRack = (clientX: number, clientY: number): string | null => {
     const rect = canvas.getBoundingClientRect();
     ndc.set(((clientX - rect.left) / rect.width) * 2 - 1, -((clientY - rect.top) / rect.height) * 2 + 1);
     raycaster.setFromCamera(ndc, camera);
     const owner = new Map<THREE.Object3D, string | null>();
     for (const r of room.racks) owner.set(r.group, r.id);
-    for (const d of room.devices) owner.set(d.group, null);
+    for (const d of room.devices) owner.set(d.group, d.rack);
     const hit = raycaster.intersectObjects([...owner.keys()], true)[0];
     if (!hit) return null;
     // 맞은 메시에서 위로 올라가며 랙 그룹·장비 그룹을 찾음
