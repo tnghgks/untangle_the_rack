@@ -19,6 +19,8 @@ export interface GameEvents {
   /** 랙에서 뺌 (손에 들림 — 다시 끼우면 같은 id로 device:installed) */
   'device:removed': { deviceId: string };
   'device:power': { deviceId: string; on: boolean };
+  /** 바닥 칸에 랙을 새로 세움 */
+  'rack:added': { rackId: string };
   /** PDU 과부하로 차단기가 내려감 / 다시 올림 */
   'pdu:tripped': { deviceId: string };
   'pdu:reset': { deviceId: string };

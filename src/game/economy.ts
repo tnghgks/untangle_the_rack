@@ -4,7 +4,7 @@ import { PRICE_GROWTH, type DeviceDef } from '../data/catalog';
 import type { GameState } from './state';
 
 /** bought번 산 뒤의 다음 가격 (원 단위 반올림). 시작 지급 장비는 bought에 세지 않는다 */
-export function priceOf(def: DeviceDef, bought: number): number {
+export function priceOf(def: Pick<DeviceDef, 'price'>, bought: number): number {
   return Math.round(def.price * PRICE_GROWTH ** bought);
 }
 

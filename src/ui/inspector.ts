@@ -19,6 +19,8 @@ const STATUS_TEXT: Record<PowerStatus, [string, string]> = {
   nolink: ['네트워크 없음', '랜 포트를 켜진 스위치에 연결하세요 (빈 포트가 없으면 스위치 24포트)'],
   running: ['가동 중', ''],
 };
+/** 켜졌지만 인터넷에 안 닿은 스위치 안내 (그 스위치에 꽂힌 서버에도 씀) */
+const UPLINK_HELP = '인터넷에 닿은 랙의 스위치에 랜선으로 이으세요 (랙 사이는 랜선 10m)';
 
 export interface InspectorDeps {
   root: HTMLElement;
@@ -103,10 +105,24 @@ export function createInspector({ root, canvas, camera, controls, room, onRemove
     `;
   };
 
+  /** 랜 포트로 이어진 상대 장비들 */
+  const lanPeers = (d: Device): Device[] =>
+    d.ports.flatMap((port) => {
+      if (port.kind !== 'lan' || !port.plugged) return [];
+      const { cable, end } = port.plugged;
+      const other = cable.ends[end === 0 ? 1 : 0];
+      const peer = other && room.devices.find((x) => x.ports.includes(other));
+      return peer ? [peer] : [];
+    });
+
   const render = (d: Device): string => {
     if (d.def.rings) return renderManager(d);
     const p = d.power;
-    const [label, baseHelp] = STATUS_TEXT[p.status];
+    const [label, statusHelp] = STATUS_TEXT[p.status];
+    // 서버가 nolink인데 꽂힌 스위치가 켜졌지만 인터넷에 안 닿은 것이면 그 스위치 쪽 안내 (서버 배선은 이미 됨)
+    const switchNolink = p.role === 'server' && p.status === 'nolink' && lanPeers(d).some((x) => x.power.role === 'switch' && x.power.status === 'nolink');
+    const baseHelp =
+      p.role === 'switch' && p.status === 'nolink' ? UPLINK_HELP : switchNolink ? `꽂힌 스위치가 인터넷에 안 닿아요 · 그 스위치를 ${UPLINK_HELP}` : statusHelp;
     // 꺼져 있을 때: 배선이 끝났는지에 따라 (뒷면 파란 등 = 배선 완료)
     const help = p.status === 'off' ? (p.ready ? '배선 완료 · 앞면 전원 버튼을 누르면 가동' : '뒷면 전원선·랜선을 연결하고 앞면 전원 버튼을 누르세요') : baseHelp;
     const where = d.u !== null ? `U${d.u}${d.def.sizeU > 1 ? `–${d.u + d.def.sizeU - 1}` : ''}` : '옆면';
@@ -142,8 +158,9 @@ export function createInspector({ root, canvas, camera, controls, room, onRemove
       card.innerHTML = html;
       lastHtml = html;
     }
-    // 카메라 쪽 면의 오른쪽 모서리 옆에 붙임
-    const front = camera.position.z >= 0;
+    // 카메라 쪽 면의 오른쪽 모서리 옆에 붙임 (몸체 위치는 랙 원점 기준이라 원점을 더함)
+    const [ox, oy, oz] = device.origin;
+    const front = camera.position.z >= oz;
     if (device.u === null) {
       const x = device.body.position.x;
       anchor.set(x + Math.sign(x) * PDU_LAYOUT.w, device.body.position.y, PDU_LAYOUT.z);
@@ -151,6 +168,9 @@ export function createInspector({ root, canvas, camera, controls, room, onRemove
       const right = front ? DEVICE_WIDTH / 2 : -DEVICE_WIDTH / 2;
       anchor.set(right, device.body.position.y, front ? DEVICE_DEPTH / 2 : -DEVICE_DEPTH / 2);
     }
+    anchor.x += ox;
+    anchor.y += oy;
+    anchor.z += oz;
     anchor.project(camera);
     const rect = canvas.getBoundingClientRect();
     const sx = ((anchor.x + 1) / 2) * rect.width;

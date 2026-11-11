@@ -8,13 +8,13 @@ export interface GameState {
   /** 마지막으로 수익을 더한 시각 (Date.now ms). 저장하지 않음 — 불러온 시점부터 다시 쌓음 */
   lastTick: number;
   /** 장비별 구매 횟수 → 다음 가격. 시작 지급 장비는 세지 않는다 */
-  bought: Partial<Record<DeviceDefId, number>>;
+  bought: Partial<Record<DeviceDefId | 'rack', number>>;
 }
 
 export function createGameState(now: number, money = 0): GameState {
   return { money, lastTick: now, bought: {} };
 }
 
-export function boughtCount(state: GameState, id: DeviceDefId): number {
+export function boughtCount(state: GameState, id: DeviceDefId | 'rack'): number {
   return state.bought[id] ?? 0;
 }

@@ -14,7 +14,7 @@ const steps = (room: Room, n: number) => {
 
 /** 시작 방 + U15에 매니저 */
 function withManager(u = 15): { room: Room; manager: Device; rings: Ring[] } {
-  const room = createStartRoom(new THREE.Scene(), new THREE.Group());
+  const room = createStartRoom(new THREE.Scene());
   const manager = room.install('cable-manager', u)!;
   steps(room, 240);
   return { room, manager, rings: ringsOf(manager.id, u, DEVICES['cable-manager'].rings!) };
@@ -40,7 +40,7 @@ describe('케이블 매니저', () => {
 
 describe('세로 케이블 매니저', () => {
   function withSide(): { room: Room; manager: Device; rings: Ring[] } {
-    const room = createStartRoom(new THREE.Scene(), new THREE.Group());
+    const room = createStartRoom(new THREE.Scene());
     const manager = room.addSide('cable-manager-v')!;
     steps(room, 240);
     return { room, manager, rings: deviceRings(manager) };

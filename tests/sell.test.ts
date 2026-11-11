@@ -28,7 +28,7 @@ describe('판매', () => {
 
   it('케이블을 없애면 포트가 비고 메시도 걷힘', () => {
     const scene = new THREE.Scene();
-    const room = createStartRoom(scene, new THREE.Group());
+    const room = createStartRoom(scene);
     const c = room.world.cables[0];
     const ports = c.ends.slice();
     room.removeCable(c);
@@ -38,7 +38,7 @@ describe('판매', () => {
   });
 
   it('판매로는 옆면 PDU도 뺄 수 있음 (빼기는 여전히 안 됨)', () => {
-    const room = createStartRoom(new THREE.Scene(), new THREE.Group());
+    const room = createStartRoom(new THREE.Scene());
     const pdu = room.devices.find((d) => d.def.id === 'pdu')!;
     expect(room.remove(pdu)).toBe(false);
     expect(room.remove(pdu, true)).toBe(true);
@@ -47,10 +47,10 @@ describe('판매', () => {
   });
 
   it('산 케이블의 낸 값은 저장됨', () => {
-    const room = createStartRoom(new THREE.Scene(), new THREE.Group());
+    const room = createStartRoom(new THREE.Scene());
     const bought = room.spawnCable('lan', 10);
     const data: SaveData = { v: SAVE_VERSION, money: 0, bought: {}, ...room.snapshot() };
-    const back = restoreRoom(new THREE.Scene(), new THREE.Group(), parseSave(JSON.stringify(data))!);
+    const back = restoreRoom(new THREE.Scene(), parseSave(JSON.stringify(data))!);
     expect(back.world.cables.find((c) => c.id === bought.id)!.paid).toBe(10);
     expect(back.world.cables[0].paid).toBe(0);
   });

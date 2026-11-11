@@ -5,7 +5,7 @@ import { guideOf } from '../src/cable/guide';
 import { createStartRoom } from '../src/view/room';
 import { STRAP_SPACING, strapSpots } from '../src/view/tie';
 
-const newRoom = () => createStartRoom(new THREE.Scene(), new THREE.Group());
+const newRoom = () => createStartRoom(new THREE.Scene());
 const node = (c: Cable, i: number) => [c.rope.pos[i * 3]!, c.rope.pos[i * 3 + 1]!, c.rope.pos[i * 3 + 2]!] as const;
 
 describe('벨크로 띠 자리', () => {

@@ -16,6 +16,8 @@ export const RACK = {
 export const RACK_HEIGHT = RACK.baseHeight + RACK_UNITS * U + 0.08;
 
 export const CABLE_DEFAULT_LENGTH = 2.0;
+/** 랙 사이를 잇는 긴 랜선 길이 (m) */
+export const LONG_LAN_LENGTH = 10;
 
 /** U 번호(1부터, 아래에서 위로)의 아랫면 Y 좌표 */
 export function uBottomY(u: number): number {

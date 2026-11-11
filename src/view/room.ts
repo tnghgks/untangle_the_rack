@@ -1,10 +1,14 @@
 import * as THREE from 'three';
-import { createCable, CableWorld, type Cable, type Port, type PortKind } from '../cable/cable';
+import { createCable, CableWorld, endNode, type Cable, type CableEnd, type Port, type PortKind, type Route } from '../cable/cable';
 import { CableMesh } from '../cable/cableMesh';
 import type { Aabb, Vec3 } from '../cable/collide';
 import { guideOf, type Guide } from '../cable/guide';
 import { plug, unplug, type PortHit } from '../cable/plug';
-import { findRoute, laneKey, laneOffsets, laneOrder, resample, routeLayout, smoothLayout, tidyDegree, type LaneOffset, type RouteLayout } from '../cable/route';
+import { canReach } from '../cable/reach';
+import {
+  findRoute, hasTray, laneKey, laneOffsets, laneOrder, pathLength, REACH_SLACK, resample, routeLayout, routePath, smoothLayout, tidyDegree,
+  type LaneOffset, type RouteLayout,
+} from '../cable/route';
 import { events } from '../core/events';
 import { createRng } from '../core/rng';
 import { isSideDef, type DeviceDefId, type SideDefId } from '../data/catalog';
@@ -12,10 +16,11 @@ import { CABLE_DEFAULT_LENGTH, RACK_HEIGHT } from '../data/units';
 import { BOOT_MS, resetBreaker, updatePower, type PowerSummary } from '../game/power';
 import { round3, type SaveData, type SavedCable, type SavedDevice } from '../game/save';
 import { createPdu, createRackDevice, createSideManager, PDU_SIDES, setDeviceLed, setDevicePower, type Device, type Socket } from '../rack/device';
+import { cellOrigin, trayGuide, trayId, type Cell, type RackPlace } from '../rack/floor';
 import { RackSlots } from '../rack/rack';
-import { collectColliders } from './scene';
+import { collectColliders, createRackMesh, createTrayMesh } from './scene';
 
-// 서버실: 랙 슬롯표 + 장비 + 케이블 월드. 장비를 끼우면 포트·충돌 상자를 월드에 더한다.
+// 서버실: 바닥 칸에 세운 랙들(랙마다 슬롯표·트레이) + 장비 + 케이블 월드. 장비를 끼우면 포트·충돌 상자를 월드에 더한다.
 // 가동 판정은 updatePower(now): 꽂힌 케이블로 포트 연결표를 만들어 power.ts에 넘긴다.
 
 const LAN_COLORS = [0x2f7fd8, 0xe0b020, 0x38a860, 0xd0483c];
@@ -39,9 +44,21 @@ function polylineLength(pts: Vec3[]): number {
   return L;
 }
 
+/** 바닥 칸에 세운 랙 하나: 슬롯표와 메시 그룹(position = origin, 트레이 메시 포함) */
+export interface RackSite {
+  id: string;
+  cell: Cell;
+  origin: Vec3;
+  slots: RackSlots;
+  group: THREE.Group;
+}
+
 export class Room {
   readonly world = new CableWorld();
-  readonly slots = new RackSlots();
+  /** 세운 순서대로. 첫 랙(racks[0])에만 인터넷이 들어옴 */
+  readonly racks: RackSite[] = [];
+  /** 가이드가 생기거나 없어질 때(매니저 설치·제거, 랙 추가)마다 1 늚 — 가이드에서 계산한 것 캐시용 */
+  layoutVersion = 0;
   readonly devices: Device[] = [];
   readonly meshes: CableMesh[] = [];
   private readonly sockets = new Map<Port, Socket>();
@@ -62,11 +79,7 @@ export class Room {
     return this.summary.incomePerSec;
   }
 
-  constructor(
-    private readonly scene: THREE.Scene,
-    readonly rack: THREE.Group,
-  ) {
-    this.world.colliders.push(...collectColliders(rack));
+  constructor(private readonly scene: THREE.Scene) {
     // 어디서든 커넥터가 뽑히면 경로에서 빠짐. 버스는 전역이고 id만 오므로 id로 찾지 않고,
     // 이 방의 선 중 경로에 든 채 끝이 빠진 선(그 객체)을 푼다 (장비 빼기·판매는 Cable 객체로 직접 푼다)
     events.on('cable:unplugged', () => {
@@ -74,37 +87,78 @@ export class Room {
     });
   }
 
-  /** 빈 칸이면 끼우고 장비를 돌려줌. id는 불러오기에서만 지정 (포트 id가 같아야 케이블을 다시 꽂음) */
-  install(defId: DeviceDefId, u: number, id = `${defId}#${++this.serial}`): Device | null {
-    const { device, sockets } = createRackDevice(id, defId, u);
-    if (!this.slots.place(id, u, device.def.sizeU)) return null;
-    this.rack.add(device.group);
+  /** 첫 랙 id — 랙을 안 정한 설치·옆면의 기본값, 인터넷(업링크)이 들어오는 랙 */
+  private get firstRack(): string {
+    return this.racks[0]?.id ?? 'rack-1';
+  }
+
+  /**
+   * 그 칸에 랙을 세움 (이미 랙이 있으면 null). 랙·트레이 메시를 칸 원점에 두고 프레임 충돌 상자를 더함.
+   * 놓을 수 있는 칸인지(케이블이 닿는지)는 부르는 쪽이 판정 — 불러오기는 판정 없이 세운다
+   */
+  addRack(cell: Cell, id = `rack-${this.racks.length + 1}`): RackSite | null {
+    if (this.rackAt(cell) || this.rack(id)) return null;
+    const origin = cellOrigin(cell);
+    const group = createRackMesh();
+    group.position.set(origin[0], origin[1], origin[2]);
+    group.add(createTrayMesh(trayId(id)));
+    this.scene.add(group);
+    this.world.colliders.push(...collectColliders(group));
+    const site: RackSite = { id, cell: [cell[0], cell[1]], origin, slots: new RackSlots(), group };
+    this.racks.push(site);
+    this.layoutVersion++;
+    // 새 프레임 상자에 잠든 케이블이 박힌 채 남지 않게
+    for (const c of this.world.cables) c.rope.wake();
+    events.emit('rack:added', { rackId: id });
+    return site;
+  }
+
+  rack(id: string): RackSite | undefined {
+    return this.racks.find((r) => r.id === id);
+  }
+
+  rackAt(cell: Cell): RackSite | undefined {
+    return this.racks.find((r) => r.cell[0] === cell[0] && r.cell[1] === cell[1]);
+  }
+
+  /** 그 랙의 빈 칸이면 끼우고 장비를 돌려줌. id는 불러오기·옮기기에서만 지정 (포트 id가 같아야 케이블을 다시 꽂음) */
+  install(defId: DeviceDefId, u: number, rackId = this.firstRack, id = `${defId}#${++this.serial}`): Device | null {
+    const rack = this.rack(rackId);
+    if (!rack) return null;
+    const { device, sockets } = createRackDevice(id, defId, u, rack);
+    if (!rack.slots.place(id, u, device.def.sizeU)) return null;
+    this.scene.add(device.group);
     this.addDevice(device, sockets);
     events.emit('device:installed', { deviceId: id });
     return device;
   }
 
-  /** 그 옆면 장비의 비어 있는 자리 (없으면 null). PDU와 세로 매니저는 자리가 따로 (각각 왼쪽·오른쪽) */
-  freeSide(defId: SideDefId): number | null {
-    for (let side = 0; side < PDU_SIDES; side++) if (!this.devices.some((d) => d.def.id === defId && d.side === side)) return side;
+  /** 그 랙 옆면 장비의 비어 있는 자리 (없으면 null). PDU와 세로 매니저는 자리가 따로 (각각 왼쪽·오른쪽) */
+  freeSide(defId: SideDefId, rackId = this.firstRack): number | null {
+    for (let side = 0; side < PDU_SIDES; side++) if (!this.sideTaken(defId, rackId, side)) return side;
     return null;
   }
 
-  freePduSide(): number | null {
-    return this.freeSide('pdu');
+  freePduSide(rackId = this.firstRack): number | null {
+    return this.freeSide('pdu', rackId);
   }
 
-  /** 빈 옆면에 붙임 (자리 없으면 null) */
-  addSide(defId: SideDefId, side = this.freeSide(defId), id = `${defId}#${++this.serial}`): Device | null {
-    if (side === null || this.devices.some((d) => d.def.id === defId && d.side === side)) return null;
-    const { device, sockets } = defId === 'pdu' ? createPdu(id, side) : createSideManager(id, side);
+  private sideTaken(defId: SideDefId, rackId: string, side: number): boolean {
+    return this.devices.some((d) => d.def.id === defId && d.rack === rackId && d.side === side);
+  }
+
+  /** 그 랙 빈 옆면에 붙임 (랙이 없거나 자리 없으면 null) */
+  addSide(defId: SideDefId, rackId = this.firstRack, side = this.freeSide(defId, rackId), id = `${defId}#${++this.serial}`): Device | null {
+    const rack = this.rack(rackId);
+    if (!rack || side === null || this.sideTaken(defId, rackId, side)) return null;
+    const { device, sockets } = defId === 'pdu' ? createPdu(id, side, rack) : createSideManager(id, side, rack);
     this.scene.add(device.group);
     this.addDevice(device, sockets);
     return device;
   }
 
-  addPdu(side = this.freePduSide(), id = `pdu#${++this.serial}`): Device | null {
-    return this.addSide('pdu', side, id);
+  addPdu(rackId = this.firstRack, side = this.freePduSide(rackId), id = `pdu#${++this.serial}`): Device | null {
+    return this.addSide('pdu', rackId, side, id);
   }
 
   private addDevice(device: Device, sockets: Socket[]) {
@@ -116,6 +170,7 @@ export class Room {
     const boxes = collectColliders(device.group);
     this.boxes.set(device, boxes);
     this.world.colliders.push(...boxes);
+    if (device.def.rings) this.layoutVersion++; // 매니저 = 가이드가 생김
     // 새 상자에 잠든 케이블이 박힌 채 남지 않게 모두 깨움
     for (const c of this.world.cables) c.rope.wake();
   }
@@ -141,8 +196,9 @@ export class Room {
     removeWhere(this.world.ports, (p) => ports.has(p));
     removeWhere(this.world.colliders, (b) => boxes.has(b));
     this.devices.splice(i, 1);
-    this.slots.remove(device.id);
-    device.group.removeFromParent(); // 랙 장비는 랙 그룹, PDU는 장면에 붙어 있음
+    this.rack(device.rack)?.slots.remove(device.id);
+    if (device.def.rings) this.layoutVersion++; // 가이드가 없어짐
+    device.group.removeFromParent(); // 장비 그룹은 모두 장면에 붙어 있음
     device.group.traverse((o) => {
       if (!(o instanceof THREE.Mesh)) return;
       o.geometry.dispose();
@@ -179,6 +235,8 @@ export class Room {
       const avg = plugged.length ? plugged.reduce((s, c) => s + tidyDegree(c.route), 0) / plugged.length : 0;
       d.power.saving = TIDY_POWER_CUT * avg;
     }
+    // 인터넷은 첫 랙에만 들어옴: 첫 랙 스위치가 업링크, 다른 랙 스위치는 랜선으로 거기까지 이어져야 온라인
+    for (const d of this.devices) d.power.uplink = d.power.role === 'switch' && d.rack === this.firstRack;
     const wasTripped = new Set(this.devices.filter((d) => d.power.tripped));
     this.summary = updatePower(
       this.devices.map((d) => d.power),
@@ -199,13 +257,13 @@ export class Room {
     events.emit('pdu:reset', { deviceId: pdu.id });
   }
 
-  private addCable(kind: PortKind, saved?: SavedCable): Cable {
+  private addCable(kind: PortKind, saved?: SavedCable, length = CABLE_DEFAULT_LENGTH): Cable {
     const n = this.world.cables.length;
     const color = saved?.color ?? (kind === 'lan' ? LAN_COLORS[n % LAN_COLORS.length] : POWER_COLOR);
     // 저장된 id는 그대로 (옛 저장 포함), 번호는 그보다 뒤로
     const num = saved && /^cable-(\d+)$/.exec(saved.id);
     if (num) this.cableSerial = Math.max(this.cableSerial, Number(num[1]) + 1);
-    const c = createCable(saved?.id ?? `cable-${this.cableSerial++}`, kind, CABLE_DEFAULT_LENGTH, color);
+    const c = createCable(saved?.id ?? `cable-${this.cableSerial++}`, kind, length, color);
     this.world.cables.push(c);
     const m = new CableMesh(c);
     this.scene.add(m.group);
@@ -214,16 +272,17 @@ export class Room {
   }
 
   /**
-   * 상점에서 산 케이블: 랙 바로 뒤 바닥에 U자로 접어 놓음. 양 끝은 PDU 쪽(-x)에 모여
+   * 상점에서 산 케이블: 그 랙 바로 뒤 바닥에 지그재그로 접어 놓음 (2m는 U자 한 번). 양 끝은 PDU 쪽(-x)에 모여
    * 뒷면 시점에서 하단 툴바·상점 패널에 가리지 않는다. 놓을 때마다 조금씩 뒤로
    */
-  spawnCable(kind: PortKind, paid = 0): Cable {
-    const c = this.addCable(kind);
+  spawnCable(kind: PortKind, paid = 0, length = CABLE_DEFAULT_LENGTH, rackId = this.firstRack): Cable {
+    const c = this.addCable(kind, undefined, length);
     c.paid = paid;
-    const z = -0.62 - (this.spawned++ % 4) * 0.12;
+    const o = this.rack(rackId)?.origin ?? [0, 0, 0];
+    const z = o[2] - 0.62 - (this.spawned++ % 4) * 0.12;
     const y = c.rope.cfg.radius + 0.02;
-    const x0 = -0.42, x1 = 0.5, w = 0.08;
-    c.rope.setFromPolyline([[x0, y, z], [x1, y, z], [x1, y, z - w], [x0, y, z - w]]);
+    const x0 = o[0] - 0.42, x1 = o[0] + 0.5;
+    c.rope.setFromPolyline(zigzag(x0, x1, y, z, c.rope.length));
     return c;
   }
 
@@ -242,29 +301,62 @@ export class Room {
     }
   }
 
-  /** 설치된 매니저들의 가이드 */
+  /** 설치된 매니저들의 가이드 + 랙마다 위 트레이 */
   guides(): Guide[] {
-    return this.devices.flatMap((d) => guideOf(d) ?? []);
+    return [...this.devices.flatMap((d) => guideOf(d) ?? []), ...this.racks.map(trayGuide)];
   }
 
-  /** 선을 가이드에 올림: 양 끝이 꽂혀 있으면 그 가이드를 포함하는 경로를 찾아 깖 (묶음은 비움) */
+  /** 선을 가이드에 올림: 양 끝이 꽂혀 있으면 그 가이드를 포함하는 경로를 찾아 깖 (묶음은 비움). 트레이 경로는 선 길이 안이어야 */
   routeCable(cable: Cable, guideId: string): boolean {
     const [a, b] = cable.ends;
     if (!a || !b) return false;
-    const seq = findRoute(a, b, this.guides(), guideId);
+    const seq = findRoute(a, b, this.guides(), guideId, cable.rope.length);
     if (!seq) return false;
     this.setRoute(cable, seq.map((g) => g.id), []);
     events.emit('cable:routed', { cableId: cable.id });
     return true;
   }
 
-  /** 저장·옮기기 복원용: 그 가이드 순서 그대로 경로를 깖 (길이 검사 없음) */
+  /** 저장·옮기기 복원용: 그 가이드 순서 그대로 경로를 깖 (routeFits로 먼저 검사 — 트레이 없는 경로는 길이 무시) */
   routeWith(cable: Cable, guideIds: readonly string[], tied: readonly string[]): boolean {
-    if (!cable.ends[0] || !cable.ends[1] || guideIds.length === 0) return false;
-    const have = new Set(this.guides().map((g) => g.id));
-    if (!guideIds.every((id) => have.has(id))) return false;
+    if (guideIds.length === 0 || !this.routeFits(cable, guideIds)) return false;
     this.setRoute(cable, [...guideIds], [...tied]);
     return true;
+  }
+
+  /** 이 선을 그 가이드 순서로 깔 수 있나: 양 끝 꽂힘, 가이드가 다 있음, 트레이가 있으면 선 길이 안 */
+  routeFits(cable: Cable, guideIds: readonly string[]): boolean {
+    const [a, b] = cable.ends;
+    return !!a && !!b && this.seqFits(cable, a, b, guideIds);
+  }
+
+  /**
+   * 옮긴 장비 포트에 그 끝을 다시 꽂아도 되나: 직선으로 닿거나(canReach), 뽑기 전 경로(route)를 이 포트로 깔았을 때
+   * routeFits와 같은 조건(트레이 없으면 참, 있으면 길이)을 만족. 반대쪽 끝이 안 꽂혀 있으면 canReach만
+   */
+  canReplug(cable: Cable, end: CableEnd, port: Port, route: Route | null): boolean {
+    if (canReach(cable, endNode(cable, end), port.pos)) return true;
+    const other = cable.ends[end === 0 ? 1 : 0];
+    if (!other || !route || route.guides.length === 0) return false;
+    return end === 0 ? this.seqFits(cable, port, other, route.guides) : this.seqFits(cable, other, port, route.guides);
+  }
+
+  /**
+   * a → b를 그 가이드 순서로: 가이드가 다 있고, 두 포트의 랙에 맞고(같은 랙이면 그 랙의 트레이 아닌 가이드만,
+   * 다른 랙이면 양쪽 트레이 포함), 트레이가 있으면 실제 선 모양 길이 × REACH_SLACK ≤ 선 길이.
+   * 같은 랙 안 경로는 직선으로 안 닿아도 받아들임 (옮기기 복원 판정)
+   */
+  private seqFits(cable: Cable, a: Port, b: Port, guideIds: readonly string[]): boolean {
+    const byId = new Map(this.guides().map((g) => [g.id, g]));
+    const seq = guideIds.map((id) => byId.get(id));
+    if (seq.some((g) => !g)) return false;
+    const gs = seq as Guide[];
+    if (a.rack === b.rack) {
+      if (gs.some((g) => g.rack !== a.rack || g.tray)) return false;
+    } else if (!gs.some((g) => g.tray && g.rack === a.rack) || !gs.some((g) => g.tray && g.rack === b.rack)) {
+      return false;
+    }
+    return !hasTray(gs) || pathLength(routePath(a, b, gs)) * REACH_SLACK <= cable.rope.length;
   }
 
   private setRoute(cable: Cable, guides: string[], tied: string[]): void {
@@ -363,33 +455,38 @@ export class Room {
   }
 
   /** 저장할 장비·케이블 (돈·구매 기록은 main이 GameState에서 붙임) */
-  snapshot(): Pick<SaveData, 'serial' | 'spawned' | 'devices' | 'cables'> {
+  snapshot(): Pick<SaveData, 'serial' | 'spawned' | 'devices' | 'cables'> & { racks: RackPlace[] } {
     const devices: SavedDevice[] = this.devices.map((d) => ({
-      id: d.id, defId: d.def.id, u: d.u, side: d.side, on: d.on, tripped: d.power.tripped,
+      id: d.id, defId: d.def.id, u: d.u, side: d.side, on: d.on, tripped: d.power.tripped, rack: d.rack,
     }));
     const cables: SavedCable[] = this.world.cables
       .filter((c) => !this.stressCables.includes(c))
       .map((c) => ({
         id: c.id, kind: c.kind, color: c.color,
         ends: [c.ends[0]?.id ?? null, c.ends[1]?.id ?? null],
+        length: c.rope.length,
         nodes: Array.from(c.rope.pos, round3),
         ...(c.paid ? { paid: c.paid } : {}),
         ...(c.route ? { route: { guides: [...c.route.guides], tied: [...c.route.tied] } } : {}),
       }));
-    return { serial: this.serial, spawned: this.spawned, devices, cables };
+    const racks: RackPlace[] = this.racks.map((r) => ({ id: r.id, cell: [r.cell[0], r.cell[1]] }));
+    return { serial: this.serial, spawned: this.spawned, devices, cables, racks };
   }
 
-  /** 불러오기: 저장된 id·자리로 장비를, 마디 좌표 그대로 케이블을 다시 만든다 */
-  restore(data: Pick<SaveData, 'serial' | 'spawned' | 'devices' | 'cables'>): void {
+  /** 불러오기: 랙을 먼저 세우고, 저장된 id·랙·자리로 장비를, 마디 좌표 그대로 케이블을 다시 만든다 */
+  restore(data: Pick<SaveData, 'serial' | 'spawned' | 'devices' | 'cables' | 'racks'>): void {
+    for (const r of data.racks) this.addRack(r.cell, r.id);
     for (const d of data.devices) {
-      const device = isSideDef(d.defId) ? this.addSide(d.defId, d.side, d.id) : d.u === null ? null : this.install(d.defId, d.u, d.id);
+      const rack = this.rack(d.rack);
+      if (!rack) continue; // 그 랙이 없음 (깨진 저장)
+      const device = isSideDef(d.defId) ? this.addSide(d.defId, rack.id, d.side, d.id) : d.u === null ? null : this.install(d.defId, d.u, rack.id, d.id);
       if (!device) continue;
       if (device.def.id !== 'pdu') setDevicePower(device, d.on);
       device.power.tripped = d.tripped;
     }
     const portById = new Map(this.world.ports.map((p) => [p.id, p]));
     for (const saved of data.cables) {
-      const c = this.addCable(saved.kind, saved);
+      const c = this.addCable(saved.kind, saved, saved.length ?? CABLE_DEFAULT_LENGTH);
       c.paid = saved.paid ?? 0;
       const { rope } = c;
       if (saved.nodes.length === rope.pos.length) {
@@ -471,6 +568,26 @@ function wobble({ pts, spans }: RouteLayout, tights: readonly number[]): Vec3[] 
   return out;
 }
 
+/** 줄 폭 */
+const ZIG_ROW_STEP = 0.06;
+
+/**
+ * 바닥에 접어 깐 선: x0 ↔ x1 줄을 z로 ZIG_ROW_STEP씩 뒤(-z)로 늘려 가며 길이 length만큼 (최소 U자 한 번).
+ * 남는 길이가 줄 반보다 짧으면 줄을 더 안 늘림 — 로프는 꺾은선 호 길이로 고르게 깔리니 조금 짧아도 됨 (2m = U자 한 번)
+ */
+function zigzag(x0: number, x1: number, y: number, z: number, length: number): Vec3[] {
+  const row = Math.abs(x1 - x0);
+  const pts: Vec3[] = [[x0, y, z], [x1, y, z]];
+  let total = row;
+  for (let k = 1; k < 2 || total + row / 2 < length; k++) {
+    const zk = z - k * ZIG_ROW_STEP;
+    const from = k % 2 === 1 ? x1 : x0, to = k % 2 === 1 ? x0 : x1;
+    pts.push([from, y, zk], [to, y, zk]);
+    total += ZIG_ROW_STEP + row;
+  }
+  return pts;
+}
+
 function removeWhere<T>(arr: T[], drop: (x: T) => boolean): void {
   let k = 0;
   for (const x of arr) if (!drop(x)) arr[k++] = x;
@@ -489,8 +606,8 @@ function bootNow(room: Room): void {
 }
 
 /** 저장에서 방을 다시 만듦. 켜진 장비는 이미 부팅된 것으로, 케이블은 원래 모양에서 조금만 안정화 */
-export function restoreRoom(scene: THREE.Scene, rack: THREE.Group, data: SaveData): Room {
-  const room = new Room(scene, rack);
+export function restoreRoom(scene: THREE.Scene, data: SaveData): Room {
+  const room = new Room(scene);
   room.restore(data);
   bootNow(room);
   for (let i = 0; i < 20; i++) room.world.step(1 / 60);
@@ -498,8 +615,9 @@ export function restoreRoom(scene: THREE.Scene, rack: THREE.Group, data: SaveDat
 }
 
 /** 계획서 4.4 시작 상태: 옆면 PDU, U1 스위치 8포트, U3 엔트리 서버. 전원선 2·랜선 1이 꽂혀 켜진 채 */
-export function createStartRoom(scene: THREE.Scene, rack: THREE.Group): Room {
-  const room = new Room(scene, rack);
+export function createStartRoom(scene: THREE.Scene): Room {
+  const room = new Room(scene);
+  room.addRack([0, 0]);
   const pdu = room.addPdu()!;
   const sw = room.install('switch-8', 1)!;
   const entry = room.install('server-entry', 3)!;

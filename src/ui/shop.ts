@@ -12,6 +12,11 @@ export interface ShopDeps {
   cableBlocked(defId: CableDefId): string | null;
   /** 지금 가격 (구매 횟수 반영) */
   priceOf(defId: DeviceDefId): number;
+  /** 랙 카드: 지금 가격·살 수 없는 이유·자리 고르는 중인지 */
+  rackPrice(): number;
+  rackBlocked(): string | null;
+  placingRack(): boolean;
+  onBuyRack(): void;
   onBuyDevice(defId: DeviceDefId): void;
   onBuyCable(defId: CableDefId): void;
 }
@@ -29,6 +34,12 @@ export function createShop(panel: HTMLElement, deps: ShopDeps): Shop {
   `;
   const deviceList = panel.querySelector<HTMLElement>('[data-k="devices"]')!;
   const cableList = panel.querySelector<HTMLElement>('[data-k="cables"]')!;
+
+  // 랙 카드는 장비 목록 맨 위
+  const rackCard = document.createElement('button');
+  rackCard.className = 'shop-card';
+  rackCard.addEventListener('click', () => deps.onBuyRack());
+  deviceList.append(rackCard);
 
   const deviceCards = SHOP_DEVICES.map((id) => {
     const b = document.createElement('button');
@@ -58,6 +69,17 @@ export function createShop(panel: HTMLElement, deps: ShopDeps): Shop {
 
   let held: string | null = null;
   const refresh = () => {
+    const placing = deps.placingRack();
+    const rackBlocked = deps.rackBlocked();
+    rackCard.classList.toggle('held', placing);
+    draw(
+      rackCard,
+      `<span class="name">랙 <small>42U · 바닥에 세움</small></span>
+        <span class="price">${formatMoney(deps.rackPrice())}</span>
+        <span class="meta">${placing ? '자리 고르는 중 · 다시 누르면 취소' : rackBlocked ?? '바닥 초록 칸에 세우고 랜선 10m로 잇기'}</span>`,
+      // 고르는 중인 카드는 눌러서 취소할 수 있어야 함
+      rackBlocked !== null && !placing,
+    );
     deviceCards.forEach((b) => {
       const def = DEVICES[b.dataset.def as DeviceDefId];
       const blocked = deps.blockedReason(def);

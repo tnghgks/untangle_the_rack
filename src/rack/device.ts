@@ -7,7 +7,7 @@ import { RACK, RACK_HEIGHT, U, uBottomY } from '../data/units';
 import type { PowerDevice, PowerStatus } from '../game/power';
 
 // 장비 엔티티와 메시. 앞면: 전원 버튼·LED, 뒷면: 포트 소켓.
-// 메시는 랙 그룹(원점 = 월드 원점)에 붙으므로 로컬 좌표 = 월드 좌표.
+// 장비 그룹은 장면에 붙고 position = 랙 원점: 메시 좌표는 랙 기준, 포트 pos는 월드 좌표(원점을 더함).
 
 /** 장비 몸체 깊이 (앞뒤 레일 사이). 뒷면 z = -DEVICE_DEPTH / 2 */
 export const DEVICE_DEPTH = RACK.depth - 0.16;
@@ -53,6 +53,29 @@ export interface Device {
   backLed: THREE.Mesh | null;
   /** 가동 판정 상태 (power.ts가 갱신) */
   power: PowerDevice;
+  /** 달린 랙 id */
+  rack: string;
+  /** 그 랙 원점 (월드) = group.position */
+  origin: Vec3;
+}
+
+/** 장비를 다는 랙: id와 원점 (월드) */
+export interface DeviceSite {
+  id: string;
+  origin: Vec3;
+}
+
+/** 랙 기준 좌표 → 월드 좌표 */
+function toWorld(site: DeviceSite, p: Vec3): Vec3 {
+  return [p[0] + site.origin[0], p[1] + site.origin[1], p[2] + site.origin[2]];
+}
+
+/** 새 장비 그룹: 이름 = id, 랙 원점에 */
+function siteGroup(id: string, site: DeviceSite): THREE.Group {
+  const g = new THREE.Group();
+  g.name = id;
+  g.position.set(site.origin[0], site.origin[1], site.origin[2]);
+  return g;
 }
 
 export interface Socket {
@@ -82,10 +105,9 @@ export function createSocketMesh(kind: PortKind, pos: Vec3): THREE.Mesh {
 }
 
 /** 랙에 끼우는 장비: 메시 + 뒷면 포트(월드 좌표) */
-export function createRackDevice(id: string, defId: DeviceDefId, u: number): { device: Device; sockets: Socket[] } {
+export function createRackDevice(id: string, defId: DeviceDefId, u: number, site: DeviceSite): { device: Device; sockets: Socket[] } {
   const def = DEVICES[defId];
-  const g = new THREE.Group();
-  g.name = id;
+  const g = siteGroup(id, site);
   const h = deviceHeight(def.sizeU);
   const cy = deviceCenterY(u, def.sizeU);
 
@@ -104,7 +126,7 @@ export function createRackDevice(id: string, defId: DeviceDefId, u: number): { d
   if (def.rings) {
     addRings(g, id, u, def.rings);
     const power = powerOf(id, def, 'passive', []);
-    return { device: { id, def, u, side: null, on: false, ports: [], group: g, body, button: null, led: null, backLed: null, power }, sockets: [] };
+    return { device: { id, def, u, side: null, on: false, ports: [], group: g, body, button: null, led: null, backLed: null, power, rack: site.id, origin: site.origin }, sockets: [] };
   }
 
   // 앞면 전원 버튼 (왼쪽) + LED (오른쪽). 버튼은 몸체 밖으로 살짝 튀어나와 충돌 상자에 안 들어감
@@ -128,9 +150,9 @@ export function createRackDevice(id: string, defId: DeviceDefId, u: number): { d
   const isSwitch = def.id.startsWith('switch');
   const sockets: Socket[] = [];
   const ports = def.ports.map((p, i) => {
-    const pos: Vec3 = [p.x, cy + (p.y ?? 0), BACK_Z];
-    const port: Port = { id: `${id}:${p.kind}${i}`, kind: p.kind, pos, dir: OUT, plugged: null };
-    const mesh = createSocketMesh(p.kind, pos);
+    const local: Vec3 = [p.x, cy + (p.y ?? 0), BACK_Z];
+    const port: Port = { id: `${id}:${p.kind}${i}`, kind: p.kind, pos: toWorld(site, local), dir: OUT, rack: site.id, plugged: null };
+    const mesh = createSocketMesh(p.kind, local);
     g.add(mesh);
     // 스위치 랜 포트는 전부 깜빡이면 시끄러움 → 서버 포트와 전원 포트만
     sockets.push({ port, mesh, blink: !(isSwitch && p.kind === 'lan') });
@@ -138,7 +160,7 @@ export function createRackDevice(id: string, defId: DeviceDefId, u: number): { d
   });
 
   const power = powerOf(id, def, isSwitch ? 'switch' : 'server', ports);
-  const device: Device = { id, def, u, side: null, on: false, ports, group: g, body, button, led, backLed, power };
+  const device: Device = { id, def, u, side: null, on: false, ports, group: g, body, button, led, backLed, power, rack: site.id, origin: site.origin };
   return { device, sockets };
 }
 
@@ -184,12 +206,11 @@ function addRings(g: THREE.Group, id: string, u: number, xs: readonly number[]):
  * 세로 매니저: 기둥 바깥에 세운 기둥(몸체)과 y축을 감싸는 고리들(세로로 지나는 선이 통과). 자리는 왼쪽(0)·오른쪽(1).
  * 치수는 함수 안에서 — manager.ts와 순환 import라 모듈 맨 위에서 그 상수를 쓰면 브라우저에서 아직 정의 전
  */
-export function createSideManager(id: string, side: number): { device: Device; sockets: Socket[] } {
+export function createSideManager(id: string, side: number, site: DeviceSite): { device: Device; sockets: Socket[] } {
   const L = { x: SIDE_RING_X + RING_R + 0.02, w: 0.016, d: 2 * 0.026 + 0.012, y0: 0.08, y1: RACK_HEIGHT - 0.1 };
   const def = DEVICES['cable-manager-v'];
   const sx = side === 0 ? -1 : 1;
-  const g = new THREE.Group();
-  g.name = id;
+  const g = siteGroup(id, site);
   const body = new THREE.Mesh(
     new THREE.BoxGeometry(L.w, L.y1 - L.y0, L.d),
     new THREE.MeshStandardMaterial({ color: def.color, metalness: 0.5, roughness: 0.5 }),
@@ -221,13 +242,13 @@ export function createSideManager(id: string, side: number): { device: Device; s
     }
   }
   const power = powerOf(id, def, 'passive', []);
-  return { device: { id, def, u: null, side, on: false, ports: [], group: g, body, button: null, led: null, backLed: null, power }, sockets: [] };
+  return { device: { id, def, u: null, side, on: false, ports: [], group: g, body, button: null, led: null, backLed: null, power, rack: site.id, origin: site.origin }, sockets: [] };
 }
 
 function powerOf(id: string, def: DeviceDef, role: PowerDevice['role'], ports: Port[]): PowerDevice {
   return {
     id, role, on: role === 'pdu', watts: def.watts, incomePerSec: def.incomePerSec, capacity: def.capacity ?? 0, saving: 0,
-    tripped: false, load: 0, demand: 0, ports: ports.map((p) => ({ id: p.id, kind: p.kind })), bootStart: null, status: 'off', ready: false,
+    tripped: false, load: 0, demand: 0, ports: ports.map((p) => ({ id: p.id, kind: p.kind })), bootStart: null, status: 'off', ready: false, uplink: false,
   };
 }
 
@@ -256,11 +277,10 @@ export function setDeviceLed(device: Device): void {
 export const PDU_SIDES = 2;
 export const PDU_LAYOUT = { x: RACK.width / 2 + 0.04, z: -0.43, w: 0.05, d: 0.04, y0: 0.15, y1: 1.45, outlets: 8 };
 
-export function createPdu(id: string, side: number): { device: Device; sockets: Socket[] } {
+export function createPdu(id: string, side: number, site: DeviceSite): { device: Device; sockets: Socket[] } {
   const L = PDU_LAYOUT;
   const x = side === 0 ? -L.x : L.x;
-  const g = new THREE.Group();
-  g.name = id;
+  const g = siteGroup(id, site);
   const body = new THREE.Mesh(
     new THREE.BoxGeometry(L.w, L.y1 - L.y0, L.d),
     new THREE.MeshStandardMaterial({ color: DEVICES.pdu.color, metalness: 0.4, roughness: 0.6 }),
@@ -280,13 +300,13 @@ export function createPdu(id: string, side: number): { device: Device; sockets: 
   const ports: Port[] = [];
   for (let i = 0; i < L.outlets; i++) {
     const y = L.y0 + 0.1 + (i * (L.y1 - L.y0 - 0.2)) / (L.outlets - 1);
-    const pos: Vec3 = [x, y, outletZ];
-    const port: Port = { id: `${id}:power${i}`, kind: 'power', pos, dir: OUT, plugged: null };
-    const mesh = createSocketMesh('power', pos);
+    const local: Vec3 = [x, y, outletZ];
+    const port: Port = { id: `${id}:power${i}`, kind: 'power', pos: toWorld(site, local), dir: OUT, rack: site.id, plugged: null };
+    const mesh = createSocketMesh('power', local);
     g.add(mesh);
     sockets.push({ port, mesh, blink: false });
     ports.push(port);
   }
   const power = powerOf(id, DEVICES.pdu, 'pdu', ports);
-  return { device: { id, def: DEVICES.pdu, u: null, side, on: true, ports, group: g, body, button: null, led, backLed: null, power }, sockets };
+  return { device: { id, def: DEVICES.pdu, u: null, side, on: true, ports, group: g, body, button: null, led, backLed: null, power, rack: site.id, origin: site.origin }, sockets };
 }

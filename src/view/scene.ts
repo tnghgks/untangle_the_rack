@@ -1,12 +1,12 @@
 import * as THREE from 'three';
 import type { Aabb } from '../cable/collide';
 import { RACK, RACK_HEIGHT, RACK_UNITS, U, uBottomY } from '../data/units';
+import { CELL_X, TRAY_Y, TRAY_Z } from '../rack/floor';
 
 export interface Stage {
   renderer: THREE.WebGLRenderer;
   scene: THREE.Scene;
   camera: THREE.PerspectiveCamera;
-  rack: THREE.Group;
   resize(): void;
 }
 
@@ -25,9 +25,6 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   addLights(scene);
   scene.add(createFloor());
 
-  const rack = createRack();
-  scene.add(rack);
-
   const resize = () => {
     const w = window.innerWidth;
     const h = window.innerHeight;
@@ -38,7 +35,7 @@ export function createStage(canvas: HTMLCanvasElement): Stage {
   resize();
   window.addEventListener('resize', resize);
 
-  return { renderer, scene, camera, rack, resize };
+  return { renderer, scene, camera, resize };
 }
 
 function addLights(scene: THREE.Scene) {
@@ -90,8 +87,8 @@ function box(w: number, h: number, d: number, mat: THREE.Material, x: number, y:
   return m;
 }
 
-/** 42U 오픈 프레임 랙: 기둥 4개, 위·아래 판, 앞뒤 19인치 레일. 옆판은 배선이 보이도록 생략. */
-function createRack(): THREE.Group {
+/** 42U 오픈 프레임 랙: 기둥 4개, 위·아래 판, 앞뒤 19인치 레일. 옆판은 배선이 보이도록 생략. 랙 원점 기준 */
+export function createRackMesh(): THREE.Group {
   const g = new THREE.Group();
   g.name = 'rack';
   const { width: W, depth: D, frame: F, railWidth } = RACK;
@@ -113,6 +110,33 @@ function createRack(): THREE.Group {
       g.add(box(0.015, railH, 0.02, railMat, sx * (railWidth / 2 + 0.008), railY, z));
     }
   }
+  return g;
+}
+
+/** 트레이 치수 m: 깊이(z), 바닥판 두께, 옆 벽 높이·두께 */
+const TRAY = { depth: 0.12, plate: 0.004, wall: 0.03, wallT: 0.004 };
+
+/**
+ * 랙 위 트레이: 바닥판 + 양 옆(앞뒤 z) 낮은 벽. 랙 원점 기준 TRAY_Y·TRAY_Z, 폭 CELL_X (옆 칸 트레이와 맞닿음).
+ * 메시마다 userData.deviceId = trayId — 가이드 밝힘용. 충돌 상자 아님
+ */
+export function createTrayMesh(trayId: string): THREE.Group {
+  const g = new THREE.Group();
+  g.name = trayId;
+  // 매니저처럼 트레이마다 재질 하나 (밝힘이 emissive를 바꿈)
+  const mat = new THREE.MeshStandardMaterial({ color: 0x3a4048, metalness: 0.6, roughness: 0.5 });
+  const part = (w: number, h: number, d: number, y: number, z: number) => {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(0, y, z);
+    m.castShadow = true;
+    m.receiveShadow = true;
+    m.userData.deviceId = trayId;
+    g.add(m);
+  };
+  // 바닥판 윗면이 가이드 선(TRAY_Y)보다 조금 아래
+  const floorY = TRAY_Y - 0.008;
+  part(CELL_X, TRAY.plate, TRAY.depth, floorY - TRAY.plate / 2, TRAY_Z);
+  for (const s of [1, -1]) part(CELL_X, TRAY.wall, TRAY.wallT, floorY + TRAY.wall / 2, TRAY_Z + s * (TRAY.depth / 2 - TRAY.wallT / 2));
   return g;
 }
 

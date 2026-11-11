@@ -11,7 +11,7 @@ function dev(id: string, role: PowerRole, opts: Partial<PowerDevice> = {}): Powe
   return {
     id, role, on: role === 'pdu', watts: role === 'server' ? 250 : role === 'switch' ? 30 : 0,
     incomePerSec: role === 'server' ? 3 : 0, capacity: role === 'pdu' ? 3000 : 0, tripped: false, load: 0, demand: 0,
-    saving: 0, ports, bootStart: null, status: 'off', ready: false, ...opts,
+    saving: 0, ports, bootStart: null, status: 'off', ready: false, uplink: false, ...opts,
   };
 }
 
@@ -27,7 +27,7 @@ function links(...pairs: [string, string][]): Map<string, string> {
 /** PDU + 스위치 + 서버, 전부 배선 */
 function wired() {
   const pdu = dev('pdu', 'pdu');
-  const sw = dev('sw', 'switch', { on: true });
+  const sw = dev('sw', 'switch', { on: true, uplink: true });
   const srv = dev('srv', 'server', { on: true });
   const l = links(['pdu:power0', 'sw:power2'], ['pdu:power1', 'srv:power1'], ['sw:lan0', 'srv:lan0']);
   return { devs: [pdu, sw, srv], pdu, sw, srv, l };
@@ -107,7 +107,7 @@ describe('차단기', () => {
   /** 용량 500W PDU에 250W 서버 n대 */
   function loaded(n: number) {
     const pdu = dev('pdu', 'pdu', { capacity: 500, ports: Array.from({ length: n + 1 }, (_, i) => ({ id: `pdu:power${i}`, kind: 'power' as const })) });
-    const sw = dev('sw', 'switch', { on: true });
+    const sw = dev('sw', 'switch', { on: true, uplink: true });
     const srvs = Array.from({ length: n }, (_, i) => dev(`s${i}`, 'server', { on: true }));
     const l = links(['pdu:power0', 'sw:power2'], ...srvs.map((s, i): [string, string] => [`pdu:power${i + 1}`, `${s.id}:power1`]));
     return { devs: [pdu, sw, ...srvs], pdu, srvs, l };
@@ -196,5 +196,68 @@ describe('saving (정리 보상)', () => {
     b.saving = 0;
     updatePower(devs, l, 100);
     expect(pdu.tripped).toBe(true);
+  });
+});
+
+describe('업링크 (스위치 온라인 판정)', () => {
+  /** PDU + 스위치 n개(uplinkIdx만 uplink) + 각 스위치에 서버 하나. 스위치끼리는 남는 랜 포트로 잇는다 */
+  function farm(n: number, uplinkIdx: number | null) {
+    const pdu = dev('pdu', 'pdu', { ports: Array.from({ length: n * 2 }, (_, i) => ({ id: `pdu:power${i}`, kind: 'power' as const })) });
+    const sws = Array.from({ length: n }, (_, i) => dev(`sw${i}`, 'switch', { on: true, uplink: i === uplinkIdx }));
+    const srvs = Array.from({ length: n }, (_, i) => dev(`srv${i}`, 'server', { on: true }));
+    const pairs: [string, string][] = [];
+    for (let i = 0; i < n; i++) {
+      pairs.push([`pdu:power${i * 2}`, `sw${i}:power2`], [`pdu:power${i * 2 + 1}`, `srv${i}:power1`], [`sw${i}:lan0`, `srv${i}:lan0`]);
+    }
+    return { devs: [pdu, ...sws, ...srvs], sws, srvs, l: links(...pairs) };
+  }
+  const join = (l: Map<string, string>, a: string, b: string) => l.set(a, b).set(b, a);
+
+  it('업링크 스위치에 이어진 스위치의 서버는 가동', () => {
+    const { devs, sws, srvs, l } = farm(2, 0);
+    join(l, 'sw0:lan1', 'sw1:lan1');
+    updatePower(devs, l, 0);
+    updatePower(devs, l, BOOT_MS);
+    expect(sws[1].status).toBe('running');
+    expect(srvs[1].status).toBe('running');
+  });
+
+  it('업링크 없는 스위치는 nolink, 그 서버도 nolink', () => {
+    const { devs, sws, srvs, l } = farm(1, null);
+    updatePower(devs, l, 0);
+    const s = updatePower(devs, l, BOOT_MS);
+    expect(sws[0].status).toBe('nolink');
+    expect(srvs[0].status).toBe('nolink');
+    expect(s.incomePerSec).toBe(0);
+    expect(s.powerUsed).toBe(280);
+  });
+
+  it('체인 중간 스위치가 꺼지면 하류 전부 nolink', () => {
+    const { devs, sws, srvs, l } = farm(3, 0);
+    sws[1].ports.push({ id: 'sw1:lan2', kind: 'lan' });
+    join(l, 'sw0:lan1', 'sw1:lan1');
+    join(l, 'sw1:lan2', 'sw2:lan1');
+    updatePower(devs, l, 0);
+    updatePower(devs, l, BOOT_MS);
+    expect([...sws, ...srvs].every((d) => d.status === 'running')).toBe(true);
+    sws[1].on = false;
+    updatePower(devs, l, BOOT_MS + 100);
+    expect(sws[1].status).toBe('off');
+    expect(srvs[1].status).toBe('nolink');
+    expect(srvs[2].status).toBe('nolink');
+    expect(sws[2].status).toBe('nolink');
+    sws[1].on = true;
+    updatePower(devs, l, BOOT_MS + 200);
+    updatePower(devs, l, BOOT_MS * 2 + 200);
+    expect([...sws, ...srvs].every((d) => d.status === 'running')).toBe(true);
+  });
+
+  it('첫 랙과 안 이어진 섬은 오프라인', () => {
+    const { devs, sws, l } = farm(2, null);
+    join(l, 'sw0:lan1', 'sw1:lan1');
+    updatePower(devs, l, 0);
+    updatePower(devs, l, BOOT_MS);
+    expect(sws[0].status).toBe('nolink');
+    expect(sws[1].status).toBe('nolink');
   });
 });

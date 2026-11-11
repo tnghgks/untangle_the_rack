@@ -9,13 +9,14 @@ import { createPowerButtons } from './view/powerButton';
 import { createHover } from './view/hover';
 import { createDeviceDrag } from './view/deviceDrag';
 import { createGuideTool } from './view/guide';
+import { createRackPlacement } from './view/rackPlacement';
+import { createRackSelect } from './view/rackSelect';
 import { createTieTool } from './view/tie';
-import { endNode } from './cable/cable';
 import { plug } from './cable/plug';
-import { canReach } from './cable/reach';
 import { createPlacement, type MovingDevice } from './rack/placement';
 import type { Device } from './rack/device';
-import { CABLES, DEVICES, isSideDef, START_MONEY, type DeviceDefId } from './data/catalog';
+import { aisleAt, reachableCells } from './rack/floor';
+import { CABLES, DEVICES, isSideDef, RACK_DEF, START_MONEY, type DeviceDefId } from './data/catalog';
 import { events, type ToolId } from './core/events';
 import { createHud } from './ui/hud';
 import { createShop } from './ui/shop';
@@ -52,7 +53,7 @@ const hud = createHud(hudRoot, () => {
   store?.removeItem(SAVE_KEY);
   location.reload();
 }, !saved && stress === 0);
-const room = saved ? restoreRoom(stage.scene, stage.rack, saved) : createStartRoom(stage.scene, stage.rack);
+const room = saved ? restoreRoom(stage.scene, saved) : createStartRoom(stage.scene);
 if (stress > 0) room.addStress(stress);
 const state = createGameState(Date.now(), saved?.money ?? START_MONEY);
 if (saved) state.bought = { ...saved.bought };
@@ -64,40 +65,75 @@ const buy = (id: DeviceDefId): boolean => {
   return true;
 };
 
-// 입력 우선순위는 등록 순서: 장비 들기 → 판매 → 전원 버튼 → 벨크로 묶기 → 케이블 드래그(손) → 장비 끌기 → 장비 정보 카드 → OrbitControls
+// 고른 랙: 카메라가 보는 랙 = 옆면 장비·케이블이 생기는 랙. 불러오기 직후엔 첫 랙
+let selected = room.racks[0].id;
+/** 그 랙을 고르고 카메라를 그 랙으로 (앞뒤 칸에 랙이 있으면 앞면/뒷면 시점을 통로 안으로) */
+function selectRack(id: string) {
+  const rack = room.rack(id);
+  if (!rack) return;
+  selected = id;
+  rig.focus(rack.origin, aisleAt(room.racks, rack.cell));
+  shop.refresh();
+}
+
+/** 랙 값 (구매 횟수 반영) */
+const rackPrice = () => priceOf(RACK_DEF, boughtCount(state, 'rack'));
+// 랙 자리 고르기는 캡처 리스너를 가장 먼저 걸어 다른 입력(장비 들기·케이블 등)보다 앞서 클릭을 받는다.
+// 돈은 초록 칸을 골라 세울 때 낸다 (카드를 눌러 시작·Esc 취소는 그대로)
+const rackPlacement = createRackPlacement({
+  canvas,
+  camera: stage.camera,
+  scene: stage.scene,
+  room,
+  rig,
+  place(cell) {
+    // 세울 수 있는지 먼저 보고 돈을 냄 (세우지 못하면 돈을 잃지 않게)
+    if (state.money < rackPrice()) return flashHint('돈이 모자라요');
+    const rack = room.addRack(cell);
+    if (!rack) return flashHint('그 칸엔 랙을 세울 수 없어요');
+    spend(state, rackPrice());
+    state.bought.rack = boughtCount(state, 'rack') + 1;
+    // 자리 고르기가 먼저 끝나(leaveOverview) 돌아가는 중 → focus가 그 이동의 도착 자리를 새 랙 기준으로 바꿈
+    selectRack(rack.id);
+    shop.refresh();
+    flashHint('랙을 세웠어요 · 스위치·PDU를 달고, 스위치를 인터넷에 닿은 랙 스위치에 랜선 10m로 이으세요');
+  },
+});
+// 입력 우선순위는 등록 순서: 랙 자리 고르기 → 장비 들기 → 판매 → 전원 버튼 → 벨크로 묶기 → 케이블 드래그(손) → 장비 끌기 → 장비 정보 카드 → 랙 고르기 → OrbitControls
 const placement = createPlacement({
   canvas,
   camera: stage.camera,
+  scene: stage.scene,
   controls: rig.controls,
   room,
-  // 장비 값은 끼울 때 낸다 (들기 취소 = 환불 필요 없음). 뺀 장비는 공짜로 다시 끼움
-  install(id, u, moving) {
-    if (!room.slots.canPlace(u, DEVICES[id].sizeU)) return moving && reinstall(id, moving.u, moving);
-    if (moving) return reinstall(id, u, moving);
+  // 장비 값은 끼울 때 낸다 (들기 취소 = 환불 필요 없음). 뺀 장비는 공짜로 다시 끼움. 커서가 가리키는 랙이면 어느 랙이든
+  install(id, rackId, u, moving) {
+    if (!room.rack(rackId)?.slots.canPlace(u, DEVICES[id].sizeU)) return moving && reinstall(id, moving.rack, moving.u, moving);
+    if (moving) return reinstall(id, rackId, u, moving);
     if (!buy(id)) return flashHint('돈이 모자라요');
-    room.install(id, u);
+    room.install(id, u, rackId);
   },
   putBack(id, moving) {
-    reinstall(id, moving.u, moving);
+    reinstall(id, moving.rack, moving.u, moving);
     // 끌어 옮기다 빈 칸이 아닌 곳에 놓음 → 케이블까지 그대로 (reinstall 안내)
     if (!moving.plugs) flashHint(`${DEVICES[id].name}: 원래 자리(U${moving.u})로 돌려놨어요 · 케이블은 다시 꽂으세요`);
   },
 });
 /** 뺀 장비를 같은 id로 다시 끼움. 전원 버튼 상태는 뺄 때 그대로 */
-const reinstall = (id: DeviceDefId, u: number, moving: MovingDevice) => {
-  const device = room.install(id, u, moving.id);
+const reinstall = (id: DeviceDefId, rackId: string, u: number, moving: MovingDevice) => {
+  const device = room.install(id, u, rackId, moving.id);
   if (!device) return;
   if (moving.on) room.setPower(device, true);
   // 옮긴 매니저: 지나던 선을 같은 경로·묶음으로 되살림 (그새 다른 경로에 들었거나 뽑힌 선은 그대로)
   for (const { cable, guides, tied } of moving.routes ?? []) {
     if (!cable.route) room.routeWith(cable, guides, tied);
   }
-  // 끌어 옮긴 것: 꽂혀 있던 케이블을 같은 포트에 다시 꽂음 (케이블 길이가 닿는 것만)
+  // 끌어 옮긴 것: 꽂혀 있던 케이블을 같은 포트에 다시 꽂음 (직선으로 닿거나 원래 경로로 닿는 것만 — room.canReplug)
   if (moving.plugs) {
     let kept = 0;
     for (const p of moving.plugs) {
       const port = device.ports.find((x) => x.id === p.portId);
-      if (port && canReach(p.cable, endNode(p.cable, p.end), port.pos) && plug(p.cable, p.end, port)) kept++;
+      if (port && room.canReplug(p.cable, p.end, port, p.route) && plug(p.cable, p.end, port)) kept++;
     }
     // 다 꽂은 뒤 경로를 되살림 (양 끝이 이 장비에 있는 선도 두 끝이 다 꽂힌 다음에)
     for (const { cable, route } of moving.plugs) {
@@ -105,7 +141,7 @@ const reinstall = (id: DeviceDefId, u: number, moving: MovingDevice) => {
     }
     const lost = moving.plugs.length - kept;
     flashHint(
-      `${DEVICES[id].name}: ${u === moving.u ? `U${u} 그대로` : `U${u} 칸으로 옮김`}` +
+      `${DEVICES[id].name}: ${u === moving.u && rackId === moving.rack ? `U${u} 그대로` : `U${u} 칸으로 옮김`}` +
         (kept ? ` · 케이블 ${kept}개 그대로 꽂힘` : '') + (lost ? ` · 닿지 않는 케이블 ${lost}개는 뽑힘` : ''),
     );
     return;
@@ -186,7 +222,7 @@ createDeviceDrag({
   camera: stage.camera,
   room,
   active: () => tool === 'hand' || tool === 'velcro',
-  busy: () => placement.held !== null,
+  busy: () => placement.held !== null || rackPlacement.active,
   start(device) {
     // 경로는 room.remove가 풀기 전에 잡아 둠
     const plugs = device.ports.flatMap((p) => {
@@ -194,7 +230,7 @@ createDeviceDrag({
       const { route } = p.plugged.cable;
       return [{ ...p.plugged, portId: p.id, route: route && { guides: [...route.guides], tied: [...route.tied] } }];
     });
-    const moving: MovingDevice = { id: device.id, u: device.u!, on: device.on, plugs, routes: routesThrough(device) };
+    const moving: MovingDevice = { id: device.id, rack: device.rack, u: device.u!, on: device.on, plugs, routes: routesThrough(device) };
     inspector.close();
     if (!room.remove(device)) return;
     placement.hold(device.def.id, moving, true);
@@ -207,16 +243,25 @@ const inspector = createInspector({
   controls: rig.controls,
   room,
   onRemove(device) {
-    const moving: MovingDevice = { id: device.id, u: device.u!, on: device.on, routes: routesThrough(device) };
+    const moving: MovingDevice = { id: device.id, rack: device.rack, u: device.u!, on: device.on, routes: routesThrough(device) };
     if (!room.remove(device)) return;
     placement.hold(device.def.id, moving);
   },
+});
+// 랙 프레임·트레이 클릭 → 그 랙을 고름. 다른 랙 장비 클릭도 그 랙을 고름 (정보 카드는 그대로 뜸). 정보 카드 다음에 등록
+createRackSelect({
+  canvas,
+  camera: stage.camera,
+  room,
+  busy: () => placement.held !== null || rackPlacement.active,
+  selected: () => selected,
+  select: selectRack,
 });
 createHover({
   canvas,
   camera: stage.camera,
   room,
-  busy: () => placement.held !== null,
+  busy: () => placement.held !== null || rackPlacement.active,
   tool: () => tool,
   cursorAt: tieTool.cursorAt,
 });
@@ -244,16 +289,32 @@ events.on('device:installed', ({ deviceId }) =>
 // 해금 없음: 막히는 건 자리 부족과 돈뿐
 const shop = createShop(hud.shopPanel, {
   blockedReason: (def) =>
+    // 옆면 장비는 고른 랙에 붙임, 랙 칸 장비는 어느 랙이든 빈 자리가 있으면 됨
     isSideDef(def.id)
-      ? room.freeSide(def.id) === null ? '옆면 자리 없음' : state.money < price(def.id) ? '돈 부족' : null
-      : room.slots.firstFree(def.sizeU) === null ? `빈 ${def.sizeU}U 자리 없음` : state.money < price(def.id) ? '돈 부족' : null,
+      ? room.freeSide(def.id, selected) === null ? '이 랙 옆면 자리 없음' : state.money < price(def.id) ? '돈 부족' : null
+      : room.racks.every((r) => r.slots.firstFree(def.sizeU) === null) ? `모든 랙에 빈 ${def.sizeU}U 자리 없음` : state.money < price(def.id) ? '돈 부족' : null,
   cableBlocked: (id) => (state.money < CABLES[id].price ? '돈 부족' : null),
   priceOf: price,
+  rackPrice,
+  // 자리 고르는 중엔 취소 버튼이라 막지 않음. 초록 칸이 하나도 없으면 시작해도 고를 게 없음
+  rackBlocked: () =>
+    rackPlacement.active ? null : reachableCells(room.racks).length === 0 ? '놓을 자리 없음' : state.money < rackPrice() ? '돈 부족' : null,
+  placingRack: () => rackPlacement.active,
+  onBuyRack: () => {
+    if (rackPlacement.active) return rackPlacement.cancel();
+    if (state.money < rackPrice() || reachableCells(room.racks).length === 0) return;
+    if (placement.held) return flashHint('들고 있는 장비를 먼저 내려놓으세요');
+    if (cableDrag.held()) return flashHint('들고 있는 케이블을 먼저 내려놓으세요');
+    rackPlacement.start();
+    shop.refresh();
+    flashHint('랙을 세울 초록 칸을 클릭 · Esc는 취소');
+  },
   onBuyDevice: (id) => {
+    if (rackPlacement.active) return; // 자리 고르는 동안은 다른 구매 막음
     if (isSideDef(id)) {
-      // 옆면은 고를 자리가 없어 바로 붙임 (왼쪽부터)
-      if (room.freeSide(id) === null || !buy(id)) return;
-      const d = room.addSide(id)!;
+      // 옆면은 고를 자리가 없어 고른 랙에 바로 붙임 (왼쪽부터)
+      if (room.freeSide(id, selected) === null || !buy(id)) return;
+      const d = room.addSide(id, selected)!;
       shop.refresh();
       flashHint(
         id === 'pdu'
@@ -266,8 +327,9 @@ const shop = createShop(hud.shopPanel, {
     else placement.hold(id);
   },
   onBuyCable: (id) => {
+    if (rackPlacement.active) return;
     if (!spend(state, CABLES[id].price)) return;
-    const cable = room.spawnCable(CABLES[id].kind, CABLES[id].price);
+    const cable = room.spawnCable(CABLES[id].kind, CABLES[id].price, CABLES[id].length, selected);
     shop.refresh();
     // 손 도구로 바꾸고 한쪽 끝을 든 채로 → 포트 위에서 클릭하면 바로 꽂힘
     events.emit('tool:set', 'hand');
@@ -275,7 +337,9 @@ const shop = createShop(hud.shopPanel, {
     flashHint(`${CABLES[id].name}: 커넥터를 들고 있어요 · 포트 위에서 클릭해 꽂기 · 빈 곳 클릭·Esc는 내려놓기`);
   },
 });
-if (debug) Object.assign(window, { room, rig, stage, placement, state, inspector, save: () => save() });
+if (debug) Object.assign(window, { room, rig, stage, placement, state, inspector, selectRack, save: () => save() });
+// 첫 랙 기준 시점 (앞뒤 칸에 랙이 있으면 앞면/뒷면 거리가 통로 안으로) — 처음 자리 그대로라 카메라는 안 움직임
+selectRack(selected);
 if (stress > 0) {
   window.addEventListener('keydown', (e) => {
     if (e.key === 'r' || e.key === 'R') room.redrop();
@@ -311,9 +375,9 @@ const save = () => {
   if (stress > 0 || !store || resetting) return;
   advance();
   const data: SaveData = { v: SAVE_VERSION, money: state.money, bought: { ...state.bought }, ...room.snapshot() };
-  // 손에 든 뺀 장비는 원래 자리에 있는 것으로 저장 (그 칸은 다른 장비가 못 씀 — 한 번에 하나만 듦)
+  // 손에 든 뺀 장비는 원래 랙·자리에 있는 것으로 저장 (그 칸은 다른 장비가 못 씀 — 한 번에 하나만 듦)
   const m = placement.moving;
-  if (m && placement.held) data.devices.push({ id: m.id, defId: placement.held, u: m.u, side: null, on: m.on, tripped: false });
+  if (m && placement.held) data.devices.push({ id: m.id, defId: placement.held, u: m.u, side: null, on: m.on, tripped: false, rack: m.rack });
   writeSave(store, data);
 };
 window.setInterval(save, 10_000);

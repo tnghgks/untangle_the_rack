@@ -13,6 +13,8 @@ export interface Port {
   pos: Vec3;
   /** 포트 바깥쪽 법선 — 케이블이 이 방향으로 곧게 나온다 */
   dir: Vec3;
+  /** 이 포트가 달린 장비의 랙 id */
+  rack: string;
   plugged: { cable: Cable; end: CableEnd } | null;
 }
 

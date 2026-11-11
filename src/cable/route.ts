@@ -22,6 +22,11 @@ export const SAG_MAX = 0.18;
 const FLOOR_GAP = 0.01;
 /** 세로 매니저 없이 랙 옆으로 늘어뜨릴 때 바깥으로 불룩한 정도 m */
 const BULGE = 0.035;
+/**
+ * 고정점까지 이 비율 이상 여유가 있어야 닿음 (딱 맞으면 물리가 떨림).
+ * 직선 닿음(reach.ts)·트레이 경로 길이·바닥 칸 판정(floor.ts)이 같이 씀
+ */
+export const REACH_SLACK = 1.02;
 
 /** 가이드 축에 수직인 두 방향 오프셋 m (가로 가이드: [y, z], 세로 가이드: [x, z]) */
 export interface LaneOffset {
@@ -104,9 +109,12 @@ function sag(p: Vec3, q: Vec3): Vec3 {
   return [0, -Math.min(SAG_MAX, SAG_K * Math.hypot(q[0] - p[0], q[2] - p[2]), floor), 0];
 }
 
-/** 가로 가이드 끝 e에서 세로 매니저 없이 랙 옆(side 쪽)으로 나가, p 높이까지 바깥으로 불룩하게 늘어뜨린 뒤 p로 처져 감 */
-function hangLeg(e: Vec3, p: Vec3, side: number): Leg {
-  const x = side * SIDE_RING_X;
+/** 가이드 g가 속한 랙의 옆(side 쪽) x — 랙 원점 기준 */
+const sideX = (g: Guide, side: number) => g.origin[0] + side * SIDE_RING_X;
+
+/** 가로 가이드 위 점 e에서 세로 매니저 없이 랙 옆(side 쪽)으로 나가, p 높이까지 바깥으로 불룩하게 늘어뜨린 뒤 p로 처져 감 */
+function hangLeg(g: Guide, e: Vec3, p: Vec3, side: number): Leg {
+  const x = sideX(g, side);
   const s1: Vec3 = [x, e[1], e[2]], s2: Vec3 = [x, p[1], e[2]];
   return { pts: [s1, s2, p], offs: [null, [side * BULGE, 0, 0], sag(s2, p)] };
 }
@@ -124,8 +132,9 @@ function attach(p: Vec3, g: Guide, direct: boolean, side: number): Leg {
     return { pts: [q], offs: [sag(p, q)] };
   }
   if (direct) return straight(approach(p, clampTo(g, p), g));
-  const e = sideEnd(g, side);
-  return reverseLeg(e, hangLeg(e, p, side));
+  // 트레이는 끝이 아니라 랙 옆 바로 위 점에서 늘어뜨림 (세로 매니저와 같은 x)
+  const e = g.tray ? clampTo(g, [sideX(g, side), g.a[1], g.a[2]]) : sideEnd(g, side);
+  return reverseLeg(e, hangLeg(g, e, p, side));
 }
 
 export interface RouteLayout {
@@ -144,16 +153,47 @@ const dy = (p: Port, g: Guide) => Math.abs(p.pos[1] - g.a[1]);
  */
 function directEnds(a: Port, b: Port, seq: readonly Guide[]): [boolean, boolean] {
   const g = seq[0];
+  // 트레이에 붙는 끝은 곧장 안 들어가고 늘 랙 옆으로 늘어뜨려 오름
+  const last = seq[seq.length - 1];
+  if (g?.tray || last?.tray) return [!g?.tray, !last?.tray];
   if (seq.length !== 1 || !g || g.axis !== 0) return [true, true];
   const da = dy(a, g), db = dy(b, g);
   return [da <= NEAR || da <= db, db <= NEAR || db < da];
 }
 
-/** 늘어뜨리거나 세로 매니저로 갈 랙 옆: 경로의 세로 가이드 쪽, 없으면 곧장 안 들어가는 끝 포트 쪽 (+1 오른쪽 · -1 왼쪽) */
+/**
+ * 늘어뜨리거나 세로 매니저로 갈 랙 옆: 경로의 세로 가이드 쪽, 없으면 곧장 안 들어가는 끝 포트 쪽 (+1 오른쪽 · -1 왼쪽).
+ * 부호는 그 가이드의 랙 원점 기준
+ */
 function sideOf(a: Port, b: Port, seq: readonly Guide[], direct: readonly [boolean, boolean]): number {
   const v = seq.find((g) => g.axis === 1);
-  const x = v ? v.a[0] : !direct[0] ? a.pos[0] : !direct[1] ? b.pos[0] : a.pos[0] + b.pos[0];
+  const o = (v ?? seq[0])?.origin[0] ?? 0;
+  const x = v ? v.a[0] - o : !direct[0] ? a.pos[0] - o : !direct[1] ? b.pos[0] - o : a.pos[0] - o + (b.pos[0] - o);
   return x < 0 ? -1 : 1;
+}
+
+/** 랙 원점 o에서 상대 랙(원점 to) 쪽 옆: 상대 x가 크면 +1(오른쪽), 작으면 -1(왼쪽), 같으면 포트 p의 x 쪽 */
+function towardSide(o: Vec3, to: Vec3, p: Port): number {
+  if (to[0] !== o[0]) return to[0] > o[0] ? 1 : -1;
+  return p.pos[0] < o[0] ? -1 : 1;
+}
+
+/**
+ * 끝마다 따로 정한 옆. 트레이에 붙는 끝은 그 랙에서 상대 랙(경로 반대쪽 끝 트레이의 랙) 쪽, 그 밖엔 sideOf.
+ * 트레이가 하나뿐이면 상대가 같은 랙이라 포트 x 쪽
+ */
+function endSides(a: Port, b: Port, seq: readonly Guide[], direct: readonly [boolean, boolean]): [number, number] {
+  const s = sideOf(a, b, seq, direct);
+  const trays = seq.filter((g) => g.tray);
+  const first = seq[0], last = seq[seq.length - 1];
+  const sa = first?.tray ? towardSide(first.origin, trays[trays.length - 1]!.origin, a) : s;
+  const sb = last?.tray ? towardSide(last.origin, trays[0]!.origin, b) : s;
+  return [sa, sb];
+}
+
+/** 경로에 트레이가 있나 (있으면 선 길이로 거름) */
+export function hasTray(seq: readonly Guide[]): boolean {
+  return seq.some((g) => g.tray);
 }
 
 /**
@@ -165,7 +205,7 @@ export function routeLayout(a: Port, b: Port, seq: readonly Guide[], lanes: read
   const direct = directEnds(a, b, seq);
   const sa = stubPoint(a, direct[0] ? gs[0] ?? null : null);
   const sb = stubPoint(b, direct[1] ? gs[gs.length - 1] ?? null : null);
-  const side = sideOf(a, b, seq, direct);
+  const [sideA, sideB] = endSides(a, b, seq, direct);
   const pts: Vec3[] = [a.pos, sa];
   const loose: Loose[] = [null];
   const add = (leg: Leg) =>
@@ -176,10 +216,10 @@ export function routeLayout(a: Port, b: Port, seq: readonly Guide[], lanes: read
   const spans: [number, number][] = [];
   const n = gs.length;
   // b 쪽 붙는 길 (b 스텁 → 가이드): 끝에 거꾸로 붙임
-  const tail = n > 0 ? attach(sb, gs[n - 1]!, direct[1], side) : straight([sb]);
+  const tail = n > 0 ? attach(sb, gs[n - 1]!, direct[1], sideB) : straight([sb]);
   let prev = sa;
   gs.forEach((g, k) => {
-    if (k === 0) add(attach(sa, g, direct[0], side));
+    if (k === 0) add(attach(sa, g, direct[0], sideA));
     else add(straight(approach(prev, clampTo(g, prev), g)));
     const i0 = pts.length - 1;
     const outP = k === n - 1 ? tail.pts[tail.pts.length - 1]! : clampTo(g, clampTo(gs[k + 1]!, pts[i0]!));
@@ -308,21 +348,23 @@ export function pathLength(pts: readonly Vec3[]): number {
 
 /**
  * 놓은 가이드(dropped)를 지나는 경로 (a → b 순서). dropped가 guides에 없으면 null.
+ * 같은 랙: 그 랙 매니저만(트레이 빼고) 씀 — 트레이에 놓으면 null.
  * - 가로 가이드에 놓음: 두 끝이 다 가까우면 그것 하나. 아니면 세로 매니저(먼 끝 쪽에 가까운 것)를 거쳐
  *   먼 끝 가까이의 다른 가로 가이드까지 이어 줌. 세로 매니저가 없으면 그것 하나 (먼 끝은 랙 옆으로 늘어뜨림)
  * - 세로 가이드에 놓음: 양 끝 가까이의 가로 가이드가 있으면 앞뒤로 끼움 (없는 쪽은 늘어짐)
+ * 다른 랙: crossRoute 후보 중 maxLen에 맞는 첫 경로. 실제 선 모양 길이 × REACH_SLACK가 maxLen을 넘으면 그 후보는 버림
  */
-export function findRoute(a: Port, b: Port, guides: readonly Guide[], dropped: string): Guide[] | null {
-  const drop = guides.find((g) => g.id === dropped);
-  if (!drop) return null;
-  const nearestH = (p: Port, not?: Guide): Guide | null => {
-    let best: Guide | null = null;
-    for (const g of guides) {
-      if (g.axis !== 0 || g === not || dy(p, g) > NEAR) continue;
-      if (!best || dy(p, g) < dy(p, best)) best = g;
+export function findRoute(a: Port, b: Port, guides: readonly Guide[], dropped: string, maxLen = Infinity): Guide[] | null {
+  if (a.rack !== b.rack) {
+    for (const seq of crossRoutes(a, b, guides, dropped)) {
+      if (pathLength(routePath(a, b, seq)) * REACH_SLACK <= maxLen) return seq;
     }
-    return best;
-  };
+    return null;
+  }
+  const own = guides.filter((g) => g.rack === a.rack && !g.tray);
+  const drop = own.find((g) => g.id === dropped);
+  if (!drop) return null;
+  const nearestH = (p: Port, not?: Guide): Guide | null => nearestHOf(p, own, not);
   const pick = (xs: (Guide | null)[]) => xs.filter((g): g is Guide => g !== null);
   if (drop.axis === 1) {
     const ha = nearestH(a), hb = nearestH(b);
@@ -333,10 +375,55 @@ export function findRoute(a: Port, b: Port, guides: readonly Guide[], dropped: s
   const atA = da <= db;
   const far = atA ? b : a;
   let v: Guide | null = null;
-  for (const g of guides) if (g.axis === 1 && (!v || Math.abs(g.a[0] - far.pos[0]) < Math.abs(v.a[0] - far.pos[0]))) v = g;
+  for (const g of own) if (g.axis === 1 && (!v || Math.abs(g.a[0] - far.pos[0]) < Math.abs(v.a[0] - far.pos[0]))) v = g;
   if (!v) return [drop];
   const other = nearestH(far, drop);
   return atA ? pick([drop, v, other]) : pick([other, v, drop]);
+}
+
+/** p 높이에서 NEAR 안 가장 가까운 가로 가이드 (not 빼고) */
+function nearestHOf(p: Port, guides: readonly Guide[], not?: Guide): Guide | null {
+  let best: Guide | null = null;
+  for (const g of guides) {
+    if (g.axis !== 0 || g === not || dy(p, g) > NEAR) continue;
+    if (!best || dy(p, g) < dy(p, best)) best = g;
+  }
+  return best;
+}
+
+/**
+ * 다른 랙 사이 경로: [hA, vA, a 랙 트레이, (같은 줄이면) 사이 랙 트레이들(x 순), b 랙 트레이, vB, hB] 중 있는 것.
+ * h = 그 랙 가로 매니저 중 포트에서 NEAR 안 가장 가까운 것, v = 그 랙 세로 매니저 중 상대 랙 쪽 옆(없으면 반대쪽).
+ * 후보 순서: 다 있는 것 → 세로 매니저(vA·vB) 뺀 것 → 가로 매니저(hA·hB)까지 뺀 것. 놓은 가이드(dropped)는 늘 남김
+ * (먼 쪽 세로 매니저를 타면 초록 칸에서도 길이를 넘을 수 있어서). 두 랙 중 한쪽 트레이가 없거나 dropped가 경로에 없으면 빈 목록
+ */
+function crossRoutes(a: Port, b: Port, guides: readonly Guide[], dropped: string): Guide[][] {
+  const trayOf = (rack: string) => guides.find((g) => g.tray && g.rack === rack);
+  const tA = trayOf(a.rack), tB = trayOf(b.rack);
+  if (!tA || !tB) return [];
+  const ends = (p: Port, tray: Guide, other: Guide): (Guide | null)[] => {
+    const own = guides.filter((g) => g.rack === p.rack && !g.tray);
+    const side = towardSide(tray.origin, other.origin, p);
+    const vs = own.filter((g) => g.axis === 1);
+    const onSide = (s: number) => vs.find((g) => (g.a[0] - tray.origin[0] < 0 ? -1 : 1) === s) ?? null;
+    return [nearestHOf(p, own), onSide(side) ?? onSide(-side)];
+  };
+  const [hA, vA] = ends(a, tA, tB);
+  const [hB, vB] = ends(b, tB, tA);
+  const [xa, xb] = [tA.origin[0], tB.origin[0]];
+  const between = tA.origin[2] === tB.origin[2]
+    ? guides
+        .filter((g) => g.tray && g !== tA && g !== tB && g.origin[2] === tA.origin[2] && g.origin[0] > Math.min(xa, xb) && g.origin[0] < Math.max(xa, xb))
+        .sort((g, h) => (xb > xa ? g.origin[0] - h.origin[0] : h.origin[0] - g.origin[0]))
+    : [];
+  const full = [hA, vA, tA, ...between, tB, vB, hB].filter((g): g is Guide => !!g);
+  if (!full.some((g) => g.id === dropped)) return [];
+  const without = (seq: Guide[], xs: (Guide | null)[]) => seq.filter((g) => g.id === dropped || !xs.includes(g));
+  const noV = without(full, [vA, vB]);
+  const noVH = without(noV, [hA, hB]);
+  const out = [full];
+  for (const s of [noV, noVH]) if (s.length < out[out.length - 1]!.length) out.push(s);
+  return out;
 }
 
 /** 한 가이드를 지나는 선 하나의 모양 (차선 순서용) */

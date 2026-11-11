@@ -5,10 +5,11 @@
 // 포트 x/y는 장비 뒷면 중심 기준 미터 (x: 랙 폭 방향, y: 장비 높이 중심에서 위로).
 
 import type { PortKind } from '../cable/cable';
+import { CABLE_DEFAULT_LENGTH, LONG_LAN_LENGTH } from './units';
 
 export type DeviceDefId =
   | 'server-entry' | 'server-web' | 'server-storage' | 'server-gpu' | 'switch-8' | 'switch-24' | 'pdu' | 'cable-manager' | 'cable-manager-v';
-export type CableDefId = 'cable-lan' | 'cable-power';
+export type CableDefId = 'cable-lan' | 'cable-lan-long' | 'cable-power';
 /** 랙 칸이 아니라 옆면에 붙는 장비 (sizeU 0) */
 export type SideDefId = 'pdu' | 'cable-manager-v';
 
@@ -44,6 +45,8 @@ export interface CableDef {
   name: string;
   kind: PortKind;
   price: number;
+  /** 케이블 길이 (m) */
+  length: number;
 }
 
 /** 새 게임 시작 돈: 엔트리 서버 + 케이블 몇 세트를 바로 살 수 있게 (초반에 할 일이 없던 문제, 10-25 플레이 피드백) */
@@ -107,11 +110,15 @@ export const PRICE_GROWTH = 1.25;
 
 /** 가정: GDD에 케이블 가격이 없어 첫 짐작값. 길이는 기본 2m (CABLE_DEFAULT_LENGTH) */
 export const CABLES: Record<CableDefId, CableDef> = {
-  'cable-lan': { id: 'cable-lan', name: '랜선 2m', kind: 'lan', price: 10 },
-  'cable-power': { id: 'cable-power', name: '전원선 2m', kind: 'power', price: 15 },
+  'cable-lan': { id: 'cable-lan', name: '랜선 2m', kind: 'lan', price: 10, length: CABLE_DEFAULT_LENGTH },
+  'cable-lan-long': { id: 'cable-lan-long', name: '랜선 10m', kind: 'lan', price: 50, length: LONG_LAN_LENGTH },
+  'cable-power': { id: 'cable-power', name: '전원선 2m', kind: 'power', price: 15, length: CABLE_DEFAULT_LENGTH },
 };
 
 /** 상점에 보이는 순서 */
 export const SHOP_DEVICES: DeviceDefId[] = ['server-entry', 'server-web', 'server-storage', 'server-gpu', 'switch-24', 'pdu', 'cable-manager', 'cable-manager-v'];
-export const SHOP_CABLES: CableDefId[] = ['cable-lan', 'cable-power'];
+export const SHOP_CABLES: CableDefId[] = ['cable-lan', 'cable-lan-long', 'cable-power'];
 
+
+/** 랙: 장비가 아니라 바닥에 세우는 것. 해금 없이 늘 살 수 있고, 살 때마다 ×PRICE_GROWTH */
+export const RACK_DEF = { id: 'rack', name: '랙', price: 100000 } as const;
