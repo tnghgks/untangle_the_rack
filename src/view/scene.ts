@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import type { Aabb } from '../cable/collide';
+import { THEME_COLOR } from '../data/catalog';
+import type { RackTheme } from '../game/bonus';
 import { RACK, RACK_HEIGHT, RACK_UNITS, U, uBottomY } from '../data/units';
 import { CELL_X, TRAY_Y, TRAY_Z } from '../rack/floor';
 
@@ -151,4 +153,36 @@ export function collectColliders(root: THREE.Object3D): Aabb[] {
     out.push({ min: [b.min.x, b.min.y, b.min.z], max: [b.max.x, b.max.y, b.max.z] });
   });
   return out;
+}
+
+/** 테마 띠 밝기: 전용 · 꽉 찬 전용 */
+const BAND_GLOW = { theme: 0.35, full: 1 };
+
+/**
+ * 랙 테마 띠: 위 가로판 앞·뒷면에 얇은 판 두 장 (재질 하나 공유, 랙마다 따로). 처음엔 숨김. 충돌 상자 아님.
+ * 색·밝기는 setThemeBand가 테마가 바뀔 때만 바꿈
+ */
+export function createThemeBand(): THREE.Group {
+  const g = new THREE.Group();
+  g.name = 'theme-band';
+  const { width: W, depth: D, frame: F } = RACK;
+  const mat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.4 });
+  const geo = new THREE.BoxGeometry(W - 2 * F, F * 0.5, 0.004);
+  for (const s of [1, -1]) {
+    const m = new THREE.Mesh(geo, mat);
+    m.position.set(0, RACK_HEIGHT - F / 2, s * (D / 2 + 0.003));
+    g.add(m);
+  }
+  g.visible = false;
+  return g;
+}
+
+/** 테마 없음 → 숨김. 있으면 그 종류 색, 꽉 찼으면 더 밝게 */
+export function setThemeBand(band: THREE.Group, theme: RackTheme | null): void {
+  band.visible = theme !== null;
+  if (!theme) return;
+  const mat = (band.children[0] as THREE.Mesh).material as THREE.MeshStandardMaterial;
+  mat.color.setHex(THEME_COLOR[theme.kind]);
+  mat.emissive.setHex(THEME_COLOR[theme.kind]);
+  mat.emissiveIntensity = theme.full ? BAND_GLOW.full : BAND_GLOW.theme;
 }

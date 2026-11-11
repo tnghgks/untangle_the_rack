@@ -7,6 +7,7 @@ import { routeLayout } from '../cable/route';
 import { events } from '../core/events';
 import { playTie, primeAudio } from '../ui/sfx';
 import { pickCable } from './pick';
+import { createSparkles } from './sparkle';
 import type { Room } from './room';
 
 // 벨크로 도구 (2): 경로에 든 다발(가이드 위나 경로 선 위)을 클릭하면 그 가이드 구간을 묶는다.
@@ -20,8 +21,6 @@ export const TIE_ANIM_MS = 350;
 export const STRAP_SPACING = 0.15;
 /** 띠가 감기며 커지는 시간 */
 const STRAP_GROW_MS = 120;
-/** 반짝 시간 */
-const SPARKLE_MS = 200;
 const STRAP_COLOR = 0x111111;
 /** 띠 폭(가이드 축 방향) m */
 const STRAP_WIDTH = 0.012;
@@ -135,26 +134,6 @@ interface Anim {
   strapped: boolean;
 }
 
-interface Sparkle {
-  sprite: THREE.Sprite;
-  t: number;
-}
-
-/** 반짝 텍스처: 가운데가 밝은 둥근 빛 (한 번만 만듦) */
-function sparkleTexture(): THREE.Texture {
-  const size = 64;
-  const c = document.createElement('canvas');
-  c.width = c.height = size;
-  const g = c.getContext('2d')!;
-  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
-  grad.addColorStop(0, 'rgba(255,255,255,1)');
-  grad.addColorStop(0.25, 'rgba(255,240,180,0.9)');
-  grad.addColorStop(1, 'rgba(255,220,120,0)');
-  g.fillStyle = grad;
-  g.fillRect(0, 0, size, size);
-  return new THREE.CanvasTexture(c);
-}
-
 export function createTieTool({ canvas, camera, scene, room, guides, active, onTied }: TieToolDeps): TieTool {
   const raycaster = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
@@ -164,10 +143,9 @@ export function createTieTool({ canvas, camera, scene, room, guides, active, onT
   const onSeg = new THREE.Vector3();
   const line = new THREE.Line3();
   const strapMat = new THREE.MeshStandardMaterial({ color: STRAP_COLOR, roughness: 0.9 });
-  let sparkleTex: THREE.Texture | null = null;
   let straps: Strap[] = [];
   const anims = new Map<string, Anim>();
-  let sparkles: Sparkle[] = [];
+  const sparkles = createSparkles(scene);
   /** 띠를 Room 상태에서 다시 만들어야 함 (처음 = 불러온 저장의 묶음) */
   let dirty = true;
 
@@ -209,17 +187,6 @@ export function createTieTool({ canvas, camera, scene, room, guides, active, onT
   };
 
   const growOf = (a: Anim) => easeOut(Math.min(1, (a.t - TIE_ANIM_MS) / STRAP_GROW_MS));
-
-  const sparkleAt = (p: THREE.Vector3) => {
-    sparkleTex ??= sparkleTexture();
-    const sprite = new THREE.Sprite(
-      new THREE.SpriteMaterial({ map: sparkleTex, transparent: true, depthTest: false, blending: THREE.AdditiveBlending }),
-    );
-    sprite.position.copy(p);
-    sprite.renderOrder = 30;
-    scene.add(sprite);
-    sparkles.push({ sprite, t: 0 });
-  };
 
   const rayAt = (clientX: number, clientY: number): THREE.Ray => {
     const rect = canvas.getBoundingClientRect();
@@ -305,7 +272,7 @@ export function createTieTool({ canvas, camera, scene, room, guides, active, onT
             continue;
           }
           rebuild();
-          for (const s of straps) if (s.guideId === a.guideId) sparkleAt(s.mesh.position);
+          for (const s of straps) if (s.guideId === a.guideId) sparkles.at(s.mesh.position);
           playTie();
           onTied();
         }
@@ -323,19 +290,7 @@ export function createTieTool({ canvas, camera, scene, room, guides, active, onT
       }
       if (dirty) rebuild();
 
-      sparkles = sparkles.filter((s) => {
-        s.t += dtMs;
-        const k = s.t / SPARKLE_MS;
-        if (k >= 1) {
-          s.sprite.removeFromParent();
-          s.sprite.material.dispose();
-          return false;
-        }
-        const size = 0.04 + 0.05 * k;
-        s.sprite.scale.set(size, size, 1);
-        s.sprite.material.opacity = 1 - k;
-        return true;
-      });
+      sparkles.sync(dtMs);
     },
   };
 }

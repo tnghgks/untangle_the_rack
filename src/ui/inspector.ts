@@ -5,7 +5,7 @@ import { effectiveWatts, type PowerStatus } from '../game/power';
 import { DEVICE_DEPTH, DEVICE_WIDTH, PDU_LAYOUT, type Device } from '../rack/device';
 import { pickDevice } from '../view/pick';
 import type { Room } from '../view/room';
-import { formatRate } from './format';
+import { formatBonus, formatRate } from './format';
 
 // 장비 정보 카드: 장비 몸체를 클릭(끌지 않고)하면 그 장비 옆 화면 위치에 뜬다.
 // 케이블 잡기·전원 버튼·장비 들기가 먼저 처리한 클릭은 받지 않는다 (입력 우선순위 맨 뒤).
@@ -135,7 +135,14 @@ export function createInspector({ root, canvas, camera, controls, room, onRemove
       lines.push(`부하 ${Math.round(p.tripped ? p.demand : p.load).toLocaleString('ko-KR')} / ${p.capacity.toLocaleString('ko-KR')}W`);
       lines.push(`콘센트 ${used('power')} 사용`);
     } else {
-      if (d.def.incomePerSec > 0) lines.push(`수익 ${formatRate(d.def.incomePerSec)}${p.status === 'running' ? '' : ' (멈춤)'}`);
+      if (d.def.incomePerSec > 0) {
+        const { themes, pairs, ratio } = room.bonuses;
+        const peer = pairs.get(d.id);
+        const rate = d.def.incomePerSec * (1 + (ratio.get(d.id) ?? 0));
+        lines.push(`수익 ${formatRate(rate)}${formatBonus(themes.get(d.rack) ?? null, peer !== undefined)}${p.status === 'running' ? '' : ' (멈춤)'}`);
+        const peerDev = peer === undefined ? undefined : room.device(peer);
+        if (peerDev) lines.push(`짝: ${peerDev.def.name}`);
+      }
       lines.push(`전력 ${Math.round(effectiveWatts(p))}W`); // 정리 보상이 반영된 실제 소비
       const lan = used('lan');
       lines.push(`포트 ${lan ? `랜 ${lan} · ` : ''}전원 ${used('power')}`);

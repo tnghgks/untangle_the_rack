@@ -1,5 +1,7 @@
 // 타입 있는 이벤트 버스. 이벤트 이름과 페이로드는 GameEvents 한 곳에서 정의한다.
 
+import type { RackTheme } from '../game/bonus';
+
 export type ViewMode = 'front' | 'back' | 'free';
 export type ToolId = 'hand' | 'velcro' | 'sell';
 
@@ -21,6 +23,10 @@ export interface GameEvents {
   'device:power': { deviceId: string; on: boolean };
   /** 바닥 칸에 랙을 새로 세움 */
   'rack:added': { rackId: string };
+  /** 랙이 전용 랙이 됨 (종류가 바뀌거나 꽉 찬 단계로 오를 때도) — 불러오기·시작 방에선 안 남 */
+  'rack:themed': { rackId: string; theme: RackTheme };
+  /** 새 짝 (a < b 사전순) */
+  'server:paired': { a: string; b: string };
   /** PDU 과부하로 차단기가 내려감 / 다시 올림 */
   'pdu:tripped': { deviceId: string };
   'pdu:reset': { deviceId: string };

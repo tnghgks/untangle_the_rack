@@ -12,6 +12,8 @@ import { createGuideTool } from './view/guide';
 import { createRackPlacement } from './view/rackPlacement';
 import { createRackSelect } from './view/rackSelect';
 import { createTieTool } from './view/tie';
+import { createBonusFx } from './view/bonusFx';
+import { primeAudio } from './ui/sfx';
 import { plug } from './cable/plug';
 import { createPlacement, type MovingDevice } from './rack/placement';
 import type { Device } from './rack/device';
@@ -191,6 +193,10 @@ const guideTool = createGuideTool({
   drag: () => cableDrag,
   active: () => tool === 'hand' || tool === 'velcro',
 });
+// 전용 랙·짝이 생기는 순간 반짝 + 띵동. 짝은 부팅이 끝난 뒤(클릭 밖)에 생기므로 아무 클릭에서나 오디오를 깨워 둠
+const bonusFx = createBonusFx({ scene: stage.scene, room });
+window.addEventListener('pointerdown', primeAudio, { capture: true });
+
 // 벨크로: 경로에 든 다발을 클릭하면 묶음 (케이블 끌기보다 먼저 — 묶을 다발이 아니면 손처럼 끌림).
 // 묶는 순간 글씨는 띄우지 않고 전력 칸만 반짝
 const tieTool = createTieTool({
@@ -414,6 +420,7 @@ startLoop({
     inspector.update();
     // 묶는 연출이 마디를 먼저 옮겨야 같은 프레임 메시에 반영됨
     tieTool.sync(dtSec);
+    bonusFx.sync(dtSec);
     room.sync(performance.now() / 1000);
     guideTool.sync();
     stage.renderer.render(stage.scene, stage.camera);

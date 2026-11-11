@@ -1,6 +1,9 @@
 // 돈 표기 (GDD 8장): 1만 미만은 쉼표, 1만 이상은 만·억·조·경 축약 + 유효숫자 3자리.
 // 예: 9,999원 / 10,000 → 1.00만원 / 123,456 → 12.3만원 / 456,000,000 → 4.56억원
 
+import { PAIR_BONUS, THEME_BONUS, THEME_FULL_BONUS } from '../data/catalog';
+import type { RackTheme } from '../game/bonus';
+
 const UNITS: [number, string][] = [
   [1e16, '경'],
   [1e12, '조'],
@@ -42,4 +45,13 @@ export function formatRate(perSec: number): string {
   // 소수 수익 대비 (지금 장비 수익은 모두 정수 — 정리 보상은 전력만 줄임): 10원 미만은 소수 첫째 자리까지 내림 (0.73 → +0.7원/초)
   if (perSec < 10 && !Number.isInteger(perSec)) return `+${(Math.floor(perSec * 10) / 10).toFixed(1)}원/초`;
   return `+${formatMoney(perSec)}/초`;
+}
+
+/** 정보 카드 수익 줄 뒤에 붙는 보너스: '' 또는 ' (전용 랙 +10% · 짝 +15%)' */
+export function formatBonus(theme: RackTheme | null, paired: boolean): string {
+  const pct = (x: number) => `+${Math.round(x * 100)}%`;
+  const parts: string[] = [];
+  if (theme) parts.push(theme.full ? `꽉 찬 전용 랙 ${pct(THEME_FULL_BONUS)}` : `전용 랙 ${pct(THEME_BONUS)}`);
+  if (paired) parts.push(`짝 ${pct(PAIR_BONUS)}`);
+  return parts.length ? ` (${parts.join(' · ')})` : '';
 }

@@ -63,3 +63,28 @@ export function playTie(): void {
   osc.stop(t + CLICK_S);
   osc.onended = () => out.disconnect();
 }
+
+/** 보너스 "띵동": 짧게 올라가는 사인 두 음 (전체 250ms 안쪽) — 묶기 "탁"과 구별되게 맑은 소리 */
+export function playChime(): void {
+  const ac = audio();
+  if (!ac) return;
+  if (ac.state === 'suspended') void ac.resume();
+  const t = ac.currentTime;
+  const out = ac.createGain();
+  out.gain.value = VOLUME;
+  out.connect(ac.destination);
+  const notes: [number, number][] = [[880, 0], [1320, 0.08]];
+  notes.forEach(([freq, at], i) => {
+    const osc = ac.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.value = freq;
+    const env = ac.createGain();
+    env.gain.setValueAtTime(0.0001, t + at);
+    env.gain.exponentialRampToValueAtTime(0.8, t + at + 0.01);
+    env.gain.exponentialRampToValueAtTime(0.001, t + at + 0.16);
+    osc.connect(env).connect(out);
+    osc.start(t + at);
+    osc.stop(t + at + 0.17);
+    if (i === notes.length - 1) osc.onended = () => out.disconnect();
+  });
+}
