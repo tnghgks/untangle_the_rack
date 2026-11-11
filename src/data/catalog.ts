@@ -122,3 +122,21 @@ export const SHOP_CABLES: CableDefId[] = ['cable-lan', 'cable-lan-long', 'cable-
 
 /** 랙: 장비가 아니라 바닥에 세우는 것. 해금 없이 늘 살 수 있고, 살 때마다 ×PRICE_GROWTH */
 export const RACK_DEF = { id: 'rack', name: '랙', price: 100000 } as const;
+
+// 보너스 (③ 전용 랙·짝 연결, 2026-11-11). 안 지켜도 손해 없음 — 지키면 수익만 오름. 보수적 첫 값
+export type ServerDefId = 'server-entry' | 'server-web' | 'server-storage' | 'server-gpu';
+/** 전용 랙: 한 랙 서버가 THEME_MIN_SERVERS대 이상이고 모두 같은 종류 */
+export const THEME_BONUS = 0.1;
+/** 꽉 찬 전용 랙: 그 종류를 하나 더 끼울 자리가 없음 (THEME_BONUS 대신) */
+export const THEME_FULL_BONUS = 0.25;
+export const THEME_MIN_SERVERS = 2;
+/** 짝: PAIR_KINDS 두 서버의 랜 포트가 케이블 하나로 직접 이어지고 둘 다 가동 중 → 둘 다 */
+export const PAIR_BONUS = 0.15;
+export const PAIR_KINDS: readonly [ServerDefId, ServerDefId] = ['server-gpu', 'server-storage'];
+/** 랙 테마 띠 색 */
+export const THEME_COLOR: Record<ServerDefId, number> = {
+  'server-entry': 0xc0c8d0,
+  'server-web': 0x4fc3f7,
+  'server-storage': 0xffa040,
+  'server-gpu': 0xb070ff,
+};

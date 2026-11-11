@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatMoney } from '../src/ui/format';
+import { formatBonus, formatMoney } from '../src/ui/format';
 
 describe('formatMoney', () => {
   it.each([
@@ -16,5 +16,17 @@ describe('formatMoney', () => {
     [-12000, '-1.20만원'],
   ])('%d → %s', (v, out) => {
     expect(formatMoney(v)).toBe(out);
+  });
+});
+
+describe('formatBonus', () => {
+  it.each([
+    [null, false, ''],
+    [{ kind: 'server-web', full: false }, false, ' (전용 랙 +10%)'],
+    [{ kind: 'server-web', full: true }, false, ' (꽉 찬 전용 랙 +25%)'],
+    [null, true, ' (짝 +15%)'],
+    [{ kind: 'server-gpu', full: false }, true, ' (전용 랙 +10% · 짝 +15%)'],
+  ] as const)('%o, 짝 %s → "%s"', (theme, paired, out) => {
+    expect(formatBonus(theme, paired)).toBe(out);
   });
 });

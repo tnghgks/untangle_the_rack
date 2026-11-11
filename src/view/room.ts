@@ -11,14 +11,15 @@ import {
 } from '../cable/route';
 import { events } from '../core/events';
 import { createRng } from '../core/rng';
-import { isSideDef, type DeviceDefId, type SideDefId } from '../data/catalog';
+import { DEVICES, isSideDef, type DeviceDefId, type SideDefId } from '../data/catalog';
+import { computeBonuses, NO_BONUSES, type Bonuses, type RackTheme } from '../game/bonus';
 import { CABLE_DEFAULT_LENGTH, RACK_HEIGHT } from '../data/units';
 import { BOOT_MS, resetBreaker, updatePower, type PowerSummary } from '../game/power';
 import { round3, type SaveData, type SavedCable, type SavedDevice } from '../game/save';
 import { createPdu, createRackDevice, createSideManager, PDU_SIDES, setDeviceLed, setDevicePower, type Device, type Socket } from '../rack/device';
 import { cellOrigin, trayGuide, trayId, type Cell, type RackPlace } from '../rack/floor';
 import { RackSlots } from '../rack/rack';
-import { collectColliders, createRackMesh, createTrayMesh } from './scene';
+import { collectColliders, createRackMesh, createThemeBand, createTrayMesh, setThemeBand } from './scene';
 
 // 서버실: 바닥 칸에 세운 랙들(랙마다 슬롯표·트레이) + 장비 + 케이블 월드. 장비를 끼우면 포트·충돌 상자를 월드에 더한다.
 // 가동 판정은 updatePower(now): 꽂힌 케이블로 포트 연결표를 만들어 power.ts에 넘긴다.
@@ -35,6 +36,8 @@ const WOBBLE = 0.008;
 const WOBBLE_PERIOD = 0.25;
 /** 경로 선 모양 점 간격 m (메시가 이 모양을 따라 그림) */
 const SHAPE_STEP = 0.008;
+/** 잃은 테마·짝이 이 시간 안에 되살아나면 새 보너스 연출을 안 함 ms (장비 옮기기·다시 꽂기 + 부팅 BOOT_MS보다 길게) */
+const BONUS_REFORM_MS = 10_000;
 
 function polylineLength(pts: Vec3[]): number {
   let L = 0;
@@ -51,6 +54,8 @@ export interface RackSite {
   origin: Vec3;
   slots: RackSlots;
   group: THREE.Group;
+  /** 랙 테마 띠 (group 자식) */
+  band: THREE.Group;
 }
 
 export class Room {
@@ -73,6 +78,12 @@ export class Room {
   private readonly rng = createRng(42);
   /** 마지막 가동 판정 결과 */
   summary: PowerSummary = { incomePerSec: 0, powerUsed: 0, powerCap: 0 };
+  /** 마지막 판정의 전용 랙·짝 (정보 카드·띠가 읽음) */
+  bonuses: Bonuses = NO_BONUSES;
+  /** true인 동안 보너스 이벤트를 안 냄 (시작 방·불러오기 — 이미 있던 테마·짝에 연출 없이) */
+  quiet = true;
+  /** 테마·짝 키 → 잃은 시각 (BONUS_REFORM_MS 안에 되살아나면 연출 안 함) */
+  private readonly lostAt = new Map<string, number>();
 
   /** 초당 수익 */
   get incomePerSec(): number {
@@ -102,9 +113,11 @@ export class Room {
     const group = createRackMesh();
     group.position.set(origin[0], origin[1], origin[2]);
     group.add(createTrayMesh(trayId(id)));
+    const band = createThemeBand();
+    group.add(band);
     this.scene.add(group);
     this.world.colliders.push(...collectColliders(group));
-    const site: RackSite = { id, cell: [cell[0], cell[1]], origin, slots: new RackSlots(), group };
+    const site: RackSite = { id, cell: [cell[0], cell[1]], origin, slots: new RackSlots(), group, band };
     this.racks.push(site);
     this.layoutVersion++;
     // 새 프레임 상자에 잠든 케이블이 박힌 채 남지 않게
@@ -243,11 +256,59 @@ export class Room {
       links,
       now,
     );
+    this.applyBonuses(links, now);
     for (const d of this.devices) {
       setDeviceLed(d);
       if (d.power.tripped && !wasTripped.has(d)) events.emit('pdu:tripped', { deviceId: d.id });
     }
     return this.summary;
+  }
+
+  /** 전용 랙·짝 판정 → 수익을 보너스 포함으로 다시 셈. 새로 생긴 테마·짝만 이벤트 (quiet면 생략) */
+  private applyBonuses(links: ReadonlyMap<string, string>, now: number): void {
+    const prev = this.bonuses;
+    const next = computeBonuses(
+      this.devices.map((d) => ({
+        id: d.id, defId: d.def.id, rack: d.rack, role: d.power.role, status: d.power.status,
+        lanPorts: d.ports.flatMap((p) => (p.kind === 'lan' ? [p.id] : [])),
+      })),
+      links,
+      (rackId, kind) => this.rack(rackId)?.slots.firstFree(DEVICES[kind].sizeU) !== null,
+    );
+    this.bonuses = next;
+    let income = 0;
+    for (const d of this.devices) {
+      if (d.power.role === 'server' && d.power.status === 'running') income += d.def.incomePerSec * (1 + (next.ratio.get(d.id) ?? 0));
+    }
+    this.summary.incomePerSec = income;
+    // 띠는 테마가 바뀐 랙만 (매 프레임 재질을 안 건드림). quiet여도 띠는 맞춤
+    for (const r of this.racks) {
+      const a = prev.themes.get(r.id), b = next.themes.get(r.id);
+      if (a?.kind !== b?.kind || a?.full !== b?.full) setThemeBand(r.band, b ?? null);
+    }
+    // 방금 잃은 테마·짝: 장비를 들었다 놓거나 선을 다시 꽂아 되살아나면 새 보너스가 아님 → 연출 안 함
+    const themeKey = (rackId: string, t: RackTheme) => `t:${rackId}|${t.kind}|${t.full}`;
+    const pairKey = (a: string, b: string) => `p:${a}|${b}`;
+    for (const [rackId, t] of prev.themes) {
+      const n = next.themes.get(rackId);
+      if (!n || n.kind !== t.kind || n.full !== t.full) this.lostAt.set(themeKey(rackId, t), now);
+    }
+    for (const [a, b] of prev.pairs) if (a < b && next.pairs.get(a) !== b) this.lostAt.set(pairKey(a, b), now);
+    if (this.quiet) return;
+    const fresh = (key: string) => {
+      const at = this.lostAt.get(key);
+      if (at === undefined) return true;
+      this.lostAt.delete(key);
+      return now - at >= BONUS_REFORM_MS;
+    };
+    for (const [rackId, theme] of next.themes) {
+      const old = prev.themes.get(rackId);
+      const formed = !old || old.kind !== theme.kind || (theme.full && !old.full);
+      if (formed && fresh(themeKey(rackId, theme))) events.emit('rack:themed', { rackId, theme });
+    }
+    for (const [a, b] of next.pairs) {
+      if (a < b && prev.pairs.get(a) !== b && fresh(pairKey(a, b))) events.emit('server:paired', { a, b });
+    }
   }
 
   /** 차단기 올림. 부하가 그대로면 다음 판정에서 또 내려감 */
@@ -611,6 +672,7 @@ export function restoreRoom(scene: THREE.Scene, data: SaveData): Room {
   room.restore(data);
   bootNow(room);
   for (let i = 0; i < 20; i++) room.world.step(1 / 60);
+  room.quiet = false;
   return room;
 }
 
@@ -631,5 +693,6 @@ export function createStartRoom(scene: THREE.Scene): Room {
   bootNow(room);
   // 꽂힌 케이블이 늘어진 모양으로 자리 잡게 미리 돌림
   for (let i = 0; i < 240; i++) room.world.step(1 / 60);
+  room.quiet = false;
   return room;
 }
